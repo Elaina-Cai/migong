@@ -1,7 +1,10 @@
 package com.example.demo.interceptor;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.example.demo.entity.BlackToken;
 import com.example.demo.entity.User;
 import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.BlackTokenMapper;
 import com.example.demo.mapper.UserMapper;
 import com.example.demo.utils.JwtUtil;
 import lombok.RequiredArgsConstructor;
@@ -12,6 +15,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
 import jakarta.servlet.http.HttpServletRequest;      // 注意：是 jakarta.servlet
 import jakarta.servlet.http.HttpServletResponse;    // 注意：是 jakarta.servlet
 
+
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -19,6 +23,7 @@ import jakarta.servlet.http.HttpServletResponse;    // 注意：是 jakarta.serv
 public class JwtInterceptor implements HandlerInterceptor {
     private final JwtUtil jwtUtil;
     private final UserMapper userMapper;
+    private final BlackTokenMapper blackTokenMapper;
     //拦截器判断是否要拦截
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
@@ -35,7 +40,17 @@ public class JwtInterceptor implements HandlerInterceptor {
             log.warn("token 验证失败: {}", token);
             throw new BusinessException(401, "token 无效或已过期");
         }
-        // 3.检查用户状态(注：token是否有效的代码由JwtUtil中的方法来判断，而用户账号是否被管理员“纳入黑名单”要在拦截器这里进行判断)
+
+        // 3.检查一下请求所携带的这个token是否在数据库的“token黑名单”里，是的话就要拦截他，不是才继续下一步判断
+        //计算 token 的 SHA256 哈希值（用于存储）
+        String tokenHash = jwtUtil.hashToken(token);
+        LambdaQueryWrapper<BlackToken> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BlackToken::getTokenHash, tokenHash);
+        if (blackTokenMapper.selectCount(wrapper)>0){
+            throw new BusinessException(401,"您暂未登录");
+        }
+
+        // 4.检查用户状态(注：token是否有效的代码由JwtUtil中的方法来判断，而用户账号是否被管理员“纳入黑名单”要在拦截器这里进行判断)
         //从 token 中获取用户 ID
         Long userId = jwtUtil.getUserIdFromToken(token);
         // 判断用户状态

@@ -7,10 +7,9 @@ import com.example.demo.utils.Result;
 import lombok.RequiredArgsConstructor;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+
+import static com.example.demo.utils.JwtUtil.extractToken;
 
 @Slf4j
 @RestController
@@ -32,14 +31,27 @@ public class AuthController {
     }
     /**
      * 用户注册api
-     * POST /login
+     * POST /register
      */
     @PostMapping("/register")
-    public Result register(@RequestBody RegisterRequest request){
+    public Result<String> register(@RequestBody RegisterRequest request){
         //TODO 1.记录收到的请求到日志中
         //2.调用service层业务逻辑
         String token = authServer.register(request);
         //3.包装成Result类并返回给前端
         return Result.success(token);
+    }
+    /**
+     * 用户登出api
+     * POST /logout
+     */
+    @PostMapping("/logout")
+    public Result logout(@RequestHeader("Authorization")String authHeader){//把http请求头的Authorization头放到authHeader中
+        //TODO 1.记录收到的请求到日志中
+        //2.提取出纯的token
+        String token = extractToken(authHeader);
+        //2.调用service层的业务逻辑
+        authServer.logout(token);
+        return Result.success();
     }
 }

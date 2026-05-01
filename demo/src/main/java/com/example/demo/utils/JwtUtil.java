@@ -1,5 +1,6 @@
 package com.example.demo.utils;
 
+import com.example.demo.exception.BusinessException;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -9,6 +10,8 @@ import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Date;
 
 @Slf4j
@@ -94,5 +97,38 @@ public class JwtUtil {
     public Boolean validateToken(String token, String username) {
         String tokenUsername = getUsernameFromToken(token);
         return (tokenUsername.equals(username) && !isTokenExpired(token));
+    }
+    /**
+     * 从 HTTP 请求的 Authorization 头中提取出实际的 JWT token 字符串
+     */
+    public static String extractToken(String authorizationHeader) {
+        if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
+            return authorizationHeader.substring(7);
+        }
+        throw new BusinessException(401,"无法拆解出token");
+    }
+    /**
+     * 计算 token 的 SHA-256 哈希值（用于黑名单存储）
+     * @param token 原始 JWT 字符串
+     * @return 64 位十六进制哈希字符串
+     */
+    public String hashToken(String token) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hashBytes = digest.digest(token.getBytes(StandardCharsets.UTF_8));
+            // 将字节数组转换为十六进制字符串
+            StringBuilder hexString = new StringBuilder();
+            for (byte b : hashBytes) {
+                String hex = Integer.toHexString(0xff & b);
+                if (hex.length() == 1) {
+                    hexString.append('0');
+                }
+                hexString.append(hex);
+            }
+            return hexString.toString();
+        } catch (NoSuchAlgorithmException e) {
+            // SHA-256 是标准算法，理论上不会发生异常
+            throw new RuntimeException("SHA-256 algorithm not found", e);
+        }
     }
 }

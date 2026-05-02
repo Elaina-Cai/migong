@@ -21,7 +21,16 @@ public class WebMvcConfig implements WebMvcConfigurer {
                         "/auth/register",             // 注册接口
                         "/error",                     // Spring Boot 默认错误路径
                         "/swagger-ui/**",             // 如果有 Swagger
-                        "/v3/api-docs/**"
+                        "/v3/api-docs/**",
+                        "/",                 // 根路径(index.html)
+                        "/index.html",
+                        "/favicon.ico",
+                        "/static/**",
+                        "/css/**",
+                        "/js/**",
+                        "/*.html",
+                        "/*.css",
+                        "/*.js"
                 );
     }
 }

@@ -43,6 +43,10 @@ public class AuthServerImpl implements AuthServer {
             //没在数据库中根据账号密码找到一行user，抛出自定义的业务异常
             throw new BusinessException(401,"用户名或密码错误");
         }
+        //检查用户状态
+        if (user.getStatus() == null || user.getStatus() != 1) {
+            throw new BusinessException(403, "账号已被禁用，请联系管理员");
+        }
         // 3.验证通过，生成JWT token并返回去
         return jwtUtil.generateToken(user.getUserId(),user.getUsername());
     }

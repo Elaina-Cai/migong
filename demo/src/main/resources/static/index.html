@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>黑暗迷宫·游戏大厅</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- 登录页容器 -->
+<div id="login-page" class="login-page">
+    <div class="login-bg"></div>
+    <div class="login-box">
+        <div class="login-logo">🔮 黑暗迷宫</div>
+        <form id="auth-form">
+            <div class="input-group">
+                <input type="text" id="username" placeholder="召唤师昵称" required autocomplete="off">
+            </div>
+            <div class="input-group">
+                <input type="password" id="password" placeholder="密码" required>
+            </div>
+            <button type="submit" id="auth-btn" class="login-btn">登录</button>
+        </form>
+        <div class="login-extra">
+            <a href="#" id="toggle-link">注册新账号</a>
+            <span>|</span>
+            <a href="#">忘记密码?</a>
+        </div>
+        <p id="error-msg" class="error-msg"></p>
+    </div>
+</div>
+
+<!-- 游戏大厅主页（登录后可见） -->
+<div id="game-hall" class="game-hall" style="display: none;">
+    <!-- 顶部状态栏 -->
+    <header class="top-bar">
+        <div class="logo-area">🔮 黑暗迷宫</div>
+        <div class="user-area">
+            <span class="user-status online"></span>
+            <span id="display-username">召唤师</span>
+            <span class="user-level">LV.1</span>
+            <button id="logout-btn" class="logout-btn">登出</button>
+        </div>
+    </header>
+
+    <!-- 左侧导航 -->
+    <nav class="side-nav">
+        <ul>
+            <li class="nav-item active" data-page="home">
+                <span class="icon">🏠</span> 主页
+            </li>
+            <li class="nav-item" data-page="maze">
+                <span class="icon">🗺️</span> 开始迷宫
+            </li>
+            <li class="nav-item" data-page="leaderboard">
+                <span class="icon">🏆</span> 排行榜
+            </li>
+            <li class="nav-item" data-page="settings">
+                <span class="icon">⚙️</span> 设置
+            </li>
+        </ul>
+    </nav>
+
+    <!-- 右侧内容区 -->
+    <main class="main-content">
+        <!-- 主页欢迎面板 -->
+        <section id="page-home" class="page active">
+            <div class="hero-banner">
+                <h1>欢迎，<span id="hero-username"></span></h1>
+                <p>选择你的冒险，深入无尽迷宫</p>
+            </div>
+            <div class="quick-actions">
+                <button class="action-card" id="start-maze-btn">
+                    <span class="action-icon">⚔️</span>
+                    <span>快速开始</span>
+                </button>
+                <button class="action-card" onclick="alert('排行榜功能开发中')">
+                    <span class="action-icon">📊</span>
+                    <span>全球排行</span>
+                </button>
+                <button class="action-card" onclick="alert('设置功能开发中')">
+                    <span class="action-icon">🎨</span>
+                    <span>界面定制</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- 迷宫占位页 -->
+        <section id="page-maze" class="page">
+            <!-- 模式选择界面：模仿 LOL 客户端 -->
+            <div id="mode-select" class="lol-mode-select">
+                <div class="lol-mode-header">
+                    <h2 class="lol-mode-title">选择游戏模式</h2>
+                    <div class="lol-mode-divider"></div>
+                </div>
+
+                <div class="lol-mode-cards">
+                    <!-- 单人模式卡片 -->
+                    <div class="lol-card" id="single-mode-btn">
+                        <div class="lol-card-bg"></div>
+                        <div class="lol-card-content">
+                            <div class="lol-card-left">
+                                <div class="lol-card-mode-icon">⚔️</div>
+                                <div class="lol-card-header">
+                                    <span class="lol-card-type">CLASSIC</span>
+                                    <span class="lol-card-tag ready">推荐模式</span>
+                                </div>
+                                <h3 class="lol-card-name">单人迷宫</h3>
+                                <p class="lol-card-desc">
+                                    自定义迷宫尺寸与算法<br>
+                                    深度优先 / Prim / 递归分割<br>
+                                    收集道具，挑战最短通关时间
+                                </p>
+                            </div>
+                            <div class="lol-card-right">
+                                <div class="lol-card-image single-bg"></div>
+                            </div>
+                        </div>
+                        <div class="lol-card-border"></div>
+                        <div class="lol-card-shine"></div>
+                    </div>
+
+                    <!-- 多人模式卡片 -->
+                    <div class="lol-card disabled" id="multi-mode-btn">
+                        <div class="lol-card-bg"></div>
+                        <div class="lol-card-content">
+                            <div class="lol-card-left">
+                                <div class="lol-card-mode-icon">👥</div>
+                                <div class="lol-card-header">
+                                    <span class="lol-card-type">PVP</span>
+                                    <span class="lol-card-tag soon">即将开放</span>
+                                </div>
+                                <h3 class="lol-card-name">多人竞技</h3>
+                                <p class="lol-card-desc">
+                                    创建房间，邀请好友<br>
+                                    实时竞速，争夺排行榜<br>
+                                    动态迷宫，黑暗模式
+                                </p>
+                            </div>
+                            <div class="lol-card-right">
+                                <div class="lol-card-image multi-bg"></div>
+                            </div>
+                        </div>
+                        <div class="lol-card-border"></div>
+                        <div class="lol-card-shine"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 单人模式设置界面（待开发） -->
+            <div id="single-setup" class="single-setup" style="display: none;">
+                <button class="back-btn" id="back-to-mode">&larr; 返回模式选择</button>
+
+                <!-- 参数设置面板 -->
+                <div id="maze-config-panel" class="maze-config-panel">
+                    <h2>⚙️ 自定义迷宫</h2>
+                    <div class="config-form">
+                        <div class="config-item">
+                            <label>行数 (奇数推荐)</label>
+                            <input type="number" id="maze-rows" value="21" min="5" max="51" step="2">
+                        </div>
+                        <div class="config-item">
+                            <label>列数 (奇数推荐)</label>
+                            <input type="number" id="maze-cols" value="21" min="5" max="51" step="2">
+                        </div>
+                        <div class="config-item">
+                            <label>生成算法</label>
+                            <select id="maze-algorithm">
+                                <option value="dfs">深度优先 (DFS)</option>
+                                <option value="prim">随机 Prim</option>
+                                <option value="recursive">递归分割</option>
+                            </select>
+                        </div>
+                        <button id="generate-maze-btn" class="action-btn">生成迷宫并开始</button>
+                    </div>
+                </div>
+
+                <!-- 游戏画面（初始隐藏） -->
+                <div id="maze-game-container" class="maze-game-container" style="display: none;">
+                    <div class="game-toolbar">
+                        <button id="pause-game-btn">暂停</button>
+                        <button id="reset-game-btn">重置位置</button>
+                        <button id="new-maze-btn">新迷宫</button>
+                        <span class="game-status" id="game-status">探索中...</span>
+                    </div>
+                    <div class="canvas-wrapper">
+                        <canvas id="maze-canvas"></canvas>
+                        <canvas id="maze-bg-canvas" style="display:none;"></canvas>
+                    </div>
+                    <p class="game-hint">使用 W A S D 键移动角色</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- 排行榜占位页 -->
+        <section id="page-leaderboard" class="page">
+            <div class="placeholder">
+                <h2>🏆 排行榜</h2>
+                <p>成就与荣耀将在此展示。</p>
+            </div>
+        </section>
+
+        <!-- 设置占位页 -->
+        <section id="page-settings" class="page">
+            <div class="placeholder">
+                <h2>⚙️ 设置</h2>
+                <p>个人偏好设置尚未开放。</p>
+            </div>
+        </section>
+    </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>WebSocket 连通性测试</title>
+</head>
+<body>
+<h2>WebSocket 测试</h2>
+<div>
+    <button onclick="connect()">连接</button>
+    <button onclick="disconnect()">断开</button>
+    <span id="status">未连接</span>
+</div>
+<hr>
+<input type="text" id="msgInput" placeholder="输入消息">
+<button onclick="send()">发送</button>
+<div id="log" style="border:1px solid #ccc; height:200px; overflow:auto; margin-top:10px; padding:5px;"></div>
+
+<script>
+    let ws = null;
+
+    function connect() {
+        if (ws) return;
+        ws = new WebSocket('ws://localhost:8080/ws/maze');
+        ws.onopen = () => {
+            document.getElementById('status').innerText = '已连接';
+            log('连接成功');
+        };
+        ws.onmessage = (event) => {
+            log('收到: ' + event.data);
+        };
+        ws.onclose = () => {
+            document.getElementById('status').innerText = '未连接';
+            log('连接关闭');
+            ws = null;
+        };
+        ws.onerror = (error) => {
+            log('错误: ' + error.message);
+        };
+    }
+
+    function disconnect() {
+        if (ws) {
+            ws.close();
+            ws = null;
+        }
+    }
+
+    function send() {
+        const input = document.getElementById('msgInput');
+        if (ws && input.value) {
+            ws.send(input.value);
+            log('发送: ' + input.value);
+            input.value = '';
+        }
+    }
+
+    function log(text) {
+        const div = document.getElementById('log');
+        div.innerHTML += '<div>' + text + '</div>';
+        div.scrollTop = div.scrollHeight;
+    }
+</script>
+</body>
+</html>

@@ -2,8 +2,12 @@
 const API_BASE = '';                // 同源请求
 const TOKEN_KEY = 'maze_token';
 const USERNAME_KEY = 'maze_username';
+const USERID_KEY = 'maze_userid';
 
 // ========== 工具函数 ==========
+function setUserId(id) { localStorage.setItem(USERID_KEY, id); }
+function getUserId() { return localStorage.getItem(USERID_KEY); }
+function removeUserId() { localStorage.removeItem(USERID_KEY); }
 function getToken() { return localStorage.getItem(TOKEN_KEY); }
 function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
 function removeToken() { localStorage.removeItem(TOKEN_KEY); }
@@ -128,6 +132,11 @@ authForm.addEventListener('submit', async (e) => {
         const token = result.data;
         setToken(token);
         setUsername(username);
+
+        // 解析 JWT payload 获取 userId
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        setUserId(payload.userId);
+
         showGameHall(username);
     } catch (err) {
         errorMsg.textContent = err.message;
@@ -155,11 +164,6 @@ toggleLink.addEventListener('click', (e) => {
 // ========== 模式选择逻辑 ==========
 const modeSelectDiv = document.getElementById('mode-select');
 const singleSetupDiv = document.getElementById('single-setup');
-
-// 点击多人模式（暂时弹出提示，后续对接游戏大厅）
-document.getElementById('multi-mode-btn').addEventListener('click', () => {
-    alert('多人模式即将开放，敬请期待！');
-});
 
 // ====== 单人迷宫游戏逻辑 ======
 let currentMazeData = null;      // 当前迷宫实体
@@ -219,6 +223,7 @@ document.getElementById('back-to-mode').addEventListener('click', () => {
     document.getElementById('mode-select').style.display = 'block';
     if (mazeGameContainer) mazeGameContainer.style.display = 'none';
     if (mazeConfigPanel) mazeConfigPanel.style.display = 'block';
+    if (multiContainer) multiContainer.style.display = 'none';
 });
 
 // 画布尺寸调整
@@ -395,11 +400,335 @@ window.addEventListener('resize', () => {
 
 // 调整单人模式入口（确保参数面板显示）
 document.getElementById('single-mode-btn').addEventListener('click', () => {
-    modeSelectDiv.style.display = 'none';       // 隐藏模式选择
-    singleSetupDiv.style.display = 'block';     // 显示单人设置父容器
-    mazeConfigPanel.style.display = 'block';    // 显示参数面板
-    mazeGameContainer.style.display = 'none';   // 隐藏游戏画面（如果有残留）
+    modeSelectDiv.style.display = 'none';
+    singleSetupDiv.style.display = 'block';
+    mazeConfigPanel.style.display = 'block';
+    mazeGameContainer.style.display = 'none';
+    if (multiContainer) multiContainer.style.display = 'none';
 });
+// ====== 多人迷宫 WebSocket 逻辑 ======
+let ws = null;
+let multiRoomId = null;
+let multiUserIdStr = null;     // 当前用户的 userId（从 token 解析或登录后存储）
+let multiGrid = [];
+let multiEndRow = -1, multiEndCol = -1;
+let multiPlayersPos = {};      // userId -> { row, col }
+let multiReadySet = new Set();
+let multiHostId = null;
+let multiStarted = false;
+let multiWon = false;
+let multiPaused = false;
+let multiMoving = false;
+let multiCellSize = 20;
+
+// DOM
+const multiContainer = document.getElementById('multi-container');
+const roomLobby = document.getElementById('room-lobby');
+const waitingRoom = document.getElementById('waiting-room');
+const multiGameContainer = document.getElementById('multi-game-container');
+const multiCanvas = document.getElementById('multi-canvas');
+const multiCtx = multiCanvas ? multiCanvas.getContext('2d') : null;
+const multiBgCanvas = document.getElementById('multi-bg-canvas');
+const multiBgCtx = multiBgCanvas ? multiBgCanvas.getContext('2d') : null;
+
+// 连接 WebSocket
+function connectMultiWS() {
+    const token = getToken();
+    ws = new WebSocket(`ws://${location.host}/ws/maze?token=` + token);
+    ws.onopen = () => console.log('多人WebSocket已连接');
+    ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        handleWSMessage(msg);
+    };
+    ws.onclose = () => {
+        console.log('多人WebSocket断开');
+        resetMultiUI();
+    };
+    ws.onerror = (err) => console.error('WebSocket错误', err);
+}
+
+function handleWSMessage(msg) {
+    const { type, data } = msg;
+    switch (type) {
+        case 'room_info': updateRoomInfo(data); break;
+        case 'player_joined': addPlayerToList(data.userId); break;
+        case 'player_left': removePlayerFromList(data.userId, data.newHost); break;
+        case 'player_ready': updateReadyStatus(data.userId, data.ready); break;
+        case 'game_started': startMultiGame(data); break;
+        case 'player_moved': updateMultiPosition(data.userId, data.row, data.col); break;
+        case 'winner': showMultiWinner(data.userId); break;
+        case 'kicked': alert(data.message || '你被踢出了房间'); resetMultiUI(); break;
+        case 'left': resetMultiUI(); break;
+        case 'error': document.getElementById('room-message').textContent = data; break;
+    }
+}
+
+function sendWS(type, data) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type, data }));
+    }
+}
+
+// ---- 界面切换 ----
+document.getElementById('multi-mode-btn').addEventListener('click', () => {
+    modeSelectDiv.style.display = 'none';
+    multiContainer.style.display = 'block';
+    roomLobby.style.display = 'block';
+    waitingRoom.style.display = 'none';
+    multiGameContainer.style.display = 'none';
+    if (!ws || ws.readyState !== WebSocket.OPEN) connectMultiWS();
+});
+
+document.getElementById('back-to-mode-multi').addEventListener('click', () => {
+    multiContainer.style.display = 'none';
+    modeSelectDiv.style.display = 'block';
+    if (multiRoomId) sendWS('leave', { roomId: multiRoomId });
+    resetMultiUI();
+});
+
+// ---- 房间操作 ----
+document.getElementById('create-room-btn').addEventListener('click', () => {
+    sendWS('create', { rows: 21, cols: 21, algorithm: 'dfs' });
+});
+
+document.getElementById('join-room-btn').addEventListener('click', () => {
+    const roomId = document.getElementById('room-id-input').value.trim();
+    if (roomId) sendWS('join', { roomId });
+    else document.getElementById('room-message').textContent = '请输入房间号';
+});
+
+document.getElementById('ready-btn').addEventListener('click', () => {
+    const btn = document.getElementById('ready-btn');
+    if (btn.textContent === '准备') {
+        sendWS('ready', { roomId: multiRoomId });
+        btn.textContent = '取消准备';
+    } else {
+        sendWS('unready', { roomId: multiRoomId });
+        btn.textContent = '准备';
+    }
+});
+
+document.getElementById('start-game-btn').addEventListener('click', () => {
+    sendWS('start', { roomId: multiRoomId });
+});
+
+document.getElementById('leave-room-btn').addEventListener('click', () => {
+    sendWS('leave', { roomId: multiRoomId });
+    resetMultiUI();
+    roomLobby.style.display = 'block';
+});
+
+document.getElementById('kick-player-btn').addEventListener('click', () => {
+    const target = document.getElementById('kick-target-select').value;
+    if (target) sendWS('kick', { roomId: multiRoomId, targetUserId: target });
+});
+
+// ---- 房间信息更新 ----
+function updateRoomInfo(data) {
+    multiPlayersPos = data.positions || {};
+    multiRoomId = data.roomId;
+    multiHostId = data.host;
+    multiGrid = data.grid;
+    multiEndRow = data.endRow;
+    multiEndCol = data.endCol;
+    multiStarted = data.started;
+
+    document.getElementById('current-room-id').textContent = multiRoomId;
+    document.getElementById('room-host-badge').style.display = (multiHostId === getUserId()) ? 'inline' : 'none';
+    document.getElementById('start-game-btn').style.display = (multiHostId === getUserId()) ? 'inline-block' : 'none';
+
+    roomLobby.style.display = 'none';
+    waitingRoom.style.display = 'block';
+
+    // 清空并重建玩家列表
+    document.getElementById('kick-target-select').innerHTML = ''; // 清空旧选项
+    document.getElementById('player-list').innerHTML = '';
+    if (data.players) data.players.forEach(p => addPlayerToList(p));
+    if (data.readyPlayers) data.readyPlayers.forEach(p => multiReadySet.add(p));
+
+    updateReadyUI();
+}
+
+function addPlayerToList(userId) {
+    const list = document.getElementById('player-list');
+    const existing = document.getElementById(`player-${userId}`);
+    if (existing) return;
+    const div = document.createElement('div');
+    div.className = 'player-item';
+    div.id = `player-${userId}`;
+    div.innerHTML = `<span class="player-name">${userId}${userId === multiHostId ? '<span class="host-tag">👑房主</span>' : ''}</span>
+                     <span class="ready-tag">${multiReadySet.has(userId) ? '✅已准备' : '⏳未准备'}</span>`;
+    list.appendChild(div);
+    document.getElementById('room-player-count').textContent = `${list.children.length}/4 人`;
+    // 如果自己是房主，显示踢人下拉
+    if (getUserId() === multiHostId && userId !== getUserId()) {
+        document.getElementById('kick-player-btn').style.display = 'inline-block';
+        document.getElementById('kick-target-select').style.display = 'inline-block';
+        const opt = document.createElement('option');
+        opt.value = userId; opt.textContent = userId;
+        document.getElementById('kick-target-select').appendChild(opt);
+    }
+}
+
+function removePlayerFromList(userId, newHost) {
+    const item = document.getElementById(`player-${userId}`);
+    if (item) item.remove();
+    const list = document.getElementById('player-list');
+    document.getElementById('room-player-count').textContent = `${list.children.length}/4 人`;
+    if (newHost) {
+        multiHostId = newHost;
+        document.getElementById('room-host-badge').style.display = (multiHostId === getUserId()) ? 'inline' : 'none';
+        document.getElementById('start-game-btn').style.display = (multiHostId === getUserId()) ? 'inline-block' : 'none';
+    }
+}
+
+function updateReadyStatus(userId, ready) {
+    if (ready) multiReadySet.add(userId);
+    else multiReadySet.delete(userId);
+    const item = document.getElementById(`player-${userId}`);
+    if (item) item.querySelector('.ready-tag').textContent = ready ? '✅已准备' : '⏳未准备';
+    updateReadyUI();
+}
+
+function updateReadyUI() {
+    document.getElementById('start-game-btn').disabled = !(multiReadySet.size >= 2); // 至少2人准备
+}
+
+// ---- 游戏开始/进行 ----
+function startMultiGame(data) {
+    waitingRoom.style.display = 'none';
+    multiGameContainer.style.display = 'block';
+    multiStarted = true;
+    document.getElementById('multi-game-status').textContent = '竞速中...';
+    initMultiCanvas();
+    drawMultiMaze();
+}
+
+function initMultiCanvas() {
+    if (!multiGrid.length) return;
+    const rows = multiGrid.length, cols = multiGrid[0].length;
+    const maxW = Math.min(window.innerWidth * 0.7, 800);
+    const maxH = window.innerHeight * 0.6;
+    multiCellSize = Math.min(30, Math.floor(maxW / cols), Math.floor(maxH / rows));
+    multiCanvas.width = cols * multiCellSize;
+    multiCanvas.height = rows * multiCellSize;
+    multiBgCanvas.width = multiCanvas.width;
+    multiBgCanvas.height = multiCanvas.height;
+    drawStaticMultiBg();
+}
+
+function drawStaticMultiBg() {
+    if (!multiBgCtx || !multiGrid.length) return;
+    multiBgCtx.clearRect(0, 0, multiBgCanvas.width, multiBgCanvas.height);
+    for (let r = 0; r < multiGrid.length; r++) {
+        for (let c = 0; c < multiGrid[0].length; c++) {
+            multiBgCtx.fillStyle = multiGrid[r][c] === 1 ? '#2a2a2a' : '#1a1a1a';
+            multiBgCtx.fillRect(c * multiCellSize, r * multiCellSize, multiCellSize, multiCellSize);
+        }
+    }
+
+    // ✅ 起点（所有玩家起点固定为 row=1, col=0）
+    const startRow = 1, startCol = 0;
+    multiBgCtx.fillStyle = '#2d5a27';
+    multiBgCtx.fillRect(startCol * multiCellSize, startRow * multiCellSize, multiCellSize, multiCellSize);
+    multiBgCtx.fillStyle = '#4f8a4b';
+    multiBgCtx.font = `${multiCellSize*0.6}px sans-serif`;
+    multiBgCtx.fillText('入', startCol * multiCellSize + multiCellSize*0.2, startRow * multiCellSize + multiCellSize*0.7);
+
+    // 终点
+    multiBgCtx.fillStyle = '#5a2727';
+    multiBgCtx.fillRect(multiEndCol * multiCellSize, multiEndRow * multiCellSize, multiCellSize, multiCellSize);
+    multiBgCtx.fillStyle = '#c8aa6e';
+    multiBgCtx.font = `${multiCellSize*0.6}px sans-serif`;
+    multiBgCtx.fillText('終', multiEndCol * multiCellSize + multiCellSize*0.2, multiEndRow * multiCellSize + multiCellSize*0.7);
+}
+
+function drawMultiMaze() {
+    if (!multiCtx || !multiBgCanvas) return;
+    multiCtx.clearRect(0, 0, multiCanvas.width, multiCanvas.height);
+    multiCtx.drawImage(multiBgCanvas, 0, 0);
+    // 绘制所有玩家
+    const colors = ['#e94560', '#4fc3f7', '#ffb74d', '#81c784'];
+    let idx = 0;
+    for (const [uid, pos] of Object.entries(multiPlayersPos)) {
+        multiCtx.fillStyle = uid === getUserId() ? '#ffd700' : colors[idx % colors.length];
+        multiCtx.beginPath();
+        multiCtx.arc(pos.col * multiCellSize + multiCellSize/2, pos.row * multiCellSize + multiCellSize/2, multiCellSize*0.35, 0, Math.PI*2);
+        multiCtx.fill();
+        idx++;
+    }
+}
+
+function updateMultiPosition(userId, row, col) {
+    multiPlayersPos[userId] = { row, col };
+    drawMultiMaze();
+}
+
+function showMultiWinner(userId) {
+    multiWon = true;
+    document.getElementById('multi-game-status').textContent = `🏆 ${userId} 获胜！`;
+    alert(`${userId} 率先到达终点！`);
+    drawMultiMaze();
+}
+
+// ---- 移动 ----
+async function multiMovePlayer(direction) {
+    if (multiMoving || multiPaused || multiWon || !multiStarted) return;
+    multiMoving = true;
+    sendWS('move', { roomId: multiRoomId, direction });
+    // 本地也乐观更新（可选，这里等服务器广播后再更新）
+    multiMoving = false;
+}
+
+// ---- 重置 ----
+function resetMultiUI() {
+    roomLobby.style.display = 'block';
+    waitingRoom.style.display = 'none';
+    multiGameContainer.style.display = 'none';
+    multiRoomId = null;
+    multiGrid = [];
+    multiPlayersPos = {};
+    multiReadySet.clear();
+    multiStarted = false;
+    multiWon = false;
+    document.getElementById('room-id-input').value = '';
+    document.getElementById('room-message').textContent = '';
+    document.getElementById('kick-target-select').innerHTML = '';
+}
+
+// 多人模式键盘监听
+window.addEventListener('keydown', (e) => {
+    if (!multiGameContainer || multiGameContainer.style.display === 'none') return;
+    const key = e.key.toLowerCase();
+    if (key === 'w' || key === 'arrowup') { e.preventDefault(); multiMovePlayer('up'); }
+    else if (key === 's' || key === 'arrowdown') { e.preventDefault(); multiMovePlayer('down'); }
+    else if (key === 'a' || key === 'arrowleft') { e.preventDefault(); multiMovePlayer('left'); }
+    else if (key === 'd' || key === 'arrowright') { e.preventDefault(); multiMovePlayer('right'); }
+});
+
+// 工具栏
+document.getElementById('multi-pause-btn').addEventListener('click', () => {
+    multiPaused = !multiPaused;
+    document.getElementById('multi-pause-btn').textContent = multiPaused ? '继续' : '暂停';
+});
+
+document.getElementById('multi-leave-game-btn').addEventListener('click', () => {
+    sendWS('leave', { roomId: multiRoomId });
+    resetMultiUI();
+    roomLobby.style.display = 'block';
+    waitingRoom.style.display = 'none';
+    multiGameContainer.style.display = 'none';
+});
+
+// 确保进入多人模式时显示正确
+// 修改 switchPage 函数，添加多人容器隐藏逻辑
+const origSwitchPage = switchPage;
+switchPage = function(pageName) {
+    origSwitchPage(pageName);
+    if (pageName === 'maze') {
+        if (multiContainer) multiContainer.style.display = 'none';
+    }
+};
 // ========== 初始化 ==========
 function init() {
     const token = getToken();

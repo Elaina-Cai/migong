@@ -121,14 +121,14 @@
                     </div>
 
                     <!-- 多人模式卡片 -->
-                    <div class="lol-card disabled" id="multi-mode-btn">
+                    <div class="lol-card" id="multi-mode-btn">
                         <div class="lol-card-bg"></div>
                         <div class="lol-card-content">
                             <div class="lol-card-left">
                                 <div class="lol-card-mode-icon">👥</div>
                                 <div class="lol-card-header">
                                     <span class="lol-card-type">PVP</span>
-                                    <span class="lol-card-tag soon">即将开放</span>
+                                    <span class="lol-card-tag ready">多人对战</span>
                                 </div>
                                 <h3 class="lol-card-name">多人竞技</h3>
                                 <p class="lol-card-desc">
@@ -188,6 +188,54 @@
                         <canvas id="maze-bg-canvas" style="display:none;"></canvas>
                     </div>
                     <p class="game-hint">使用 W A S D 键移动角色</p>
+                </div>
+            </div>
+            <!-- 多人模式界面（初始隐藏） -->
+            <div id="multi-container" style="display:none;">
+                <button class="back-btn" id="back-to-mode-multi">&larr; 返回模式选择</button>
+
+                <!-- 房间列表/创建面板 -->
+                <div id="room-lobby" class="room-lobby">
+                    <h2>👥 多人竞技</h2>
+                    <div class="room-actions">
+                        <button id="create-room-btn" class="action-btn">创建房间</button>
+                        <div class="join-area">
+                            <input type="text" id="room-id-input" placeholder="输入房间号" maxlength="6">
+                            <button id="join-room-btn" class="action-btn">加入房间</button>
+                        </div>
+                    </div>
+                    <div id="room-message"></div>
+                </div>
+
+                <!-- 房间等待室 -->
+                <div id="waiting-room" style="display:none;">
+                    <h3>🏠 房间: <span id="current-room-id"></span></h3>
+                    <div class="room-info">
+                        <span id="room-host-badge">👑 房主</span>
+                        <span id="room-player-count">0/4 人</span>
+                    </div>
+                    <div id="player-list" class="player-list"></div>
+                    <div class="room-buttons">
+                        <button id="ready-btn" class="action-btn">准备</button>
+                        <button id="start-game-btn" class="action-btn" style="display:none;">开始游戏</button>
+                        <button id="kick-player-btn" class="action-btn" style="display:none;">踢出玩家</button>
+                        <select id="kick-target-select" style="display:none;"></select>
+                        <button id="leave-room-btn" class="action-btn secondary">离开房间</button>
+                    </div>
+                </div>
+
+                <!-- 多人游戏画布 -->
+                <div id="multi-game-container" style="display:none;">
+                    <div class="game-toolbar">
+                        <button id="multi-pause-btn">暂停</button>
+                        <button id="multi-leave-game-btn">退出房间</button>
+                        <span id="multi-game-status">探索中...</span>
+                    </div>
+                    <div class="canvas-wrapper">
+                        <canvas id="multi-canvas"></canvas>
+                        <canvas id="multi-bg-canvas" style="display:none;"></canvas>
+                    </div>
+                    <p class="game-hint">使用 W A S D 键移动角色，与对手竞速！</p>
                 </div>
             </div>
         </section>

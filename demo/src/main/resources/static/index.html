@@ -76,7 +76,7 @@
                 </button>
                 <button class="action-card" onclick="alert('排行榜功能开发中')">
                     <span class="action-icon">📊</span>
-                    <span>全球排行</span>
+                    <span>排行榜</span>
                 </button>
                 <button class="action-card" onclick="alert('设置功能开发中')">
                     <span class="action-icon">🎨</span>
@@ -172,6 +172,8 @@
                             </select>
                         </div>
                         <button id="generate-maze-btn" class="action-btn">生成迷宫并开始</button>
+                        <!-- 新增按钮 -->
+                        <button id="view-saves-btn" class="action-btn secondary">📁 我的存档</button>
                     </div>
                 </div>
 
@@ -180,7 +182,9 @@
                     <div class="game-toolbar">
                         <button id="pause-game-btn">暂停</button>
                         <button id="reset-game-btn">重置位置</button>
+                        <button id="save-game-btn">保存</button>
                         <button id="new-maze-btn">新迷宫</button>
+                        <span class="timer-display" id="timer-display">00:00</span>
                         <span class="game-status" id="game-status">探索中...</span>
                     </div>
                     <div class="canvas-wrapper">
@@ -188,6 +192,12 @@
                         <canvas id="maze-bg-canvas" style="display:none;"></canvas>
                     </div>
                     <p class="game-hint">使用 W A S D 键移动角色</p>
+                </div>
+
+                <!-- 我的存档面板 -->
+                <div id="saved-mazes-panel" class="saved-mazes-panel" style="display: none;">
+                    <h3>我的存档</h3>
+                    <div id="saved-mazes-list"></div>
                 </div>
             </div>
             <!-- 多人模式界面（初始隐藏） -->
@@ -227,8 +237,8 @@
                 <!-- 多人游戏画布 -->
                 <div id="multi-game-container" style="display:none;">
                     <div class="game-toolbar">
-                        <button id="multi-pause-btn">暂停</button>
                         <button id="multi-leave-game-btn">退出房间</button>
+                        <span class="timer-display" id="multi-timer-display">00:00</span>
                         <span id="multi-game-status">探索中...</span>
                     </div>
                     <div class="canvas-wrapper">
@@ -256,6 +266,53 @@
             </div>
         </section>
     </main>
+</div>
+
+<!-- 保存迷宫 Modal -->
+<div id="save-modal" class="modal-overlay" style="display:none">
+    <div class="modal-box">
+        <h3>保存迷宫</h3>
+        <div class="input-group">
+            <input type="text" id="save-maze-name" placeholder="请输入存档名称">
+        </div>
+        <p id="save-modal-error" class="error-msg"></p>
+        <div class="modal-buttons">
+            <button id="confirm-save-btn" class="action-btn">保存</button>
+            <button id="cancel-save-btn" class="action-btn secondary">取消</button>
+        </div>
+    </div>
+</div>
+
+<!-- 加载冲突 Modal -->
+<div id="load-conflict-modal" class="modal-overlay" style="display:none">
+    <div class="modal-box">
+        <h3>当前有未保存的迷宫</h3>
+        <p>是否保存当前迷宫后再加载存档？</p>
+        <div class="input-group" id="conflict-name-group" style="display:none">
+            <input type="text" id="conflict-save-name" placeholder="输入当前迷宫名称">
+        </div>
+        <div class="modal-buttons">
+            <button id="conflict-save-load-btn" class="action-btn">保存并加载</button>
+            <button id="conflict-discard-load-btn" class="action-btn secondary">不保存，直接加载</button>
+            <button id="conflict-cancel-btn" class="action-btn secondary">取消</button>
+        </div>
+    </div>
+</div>
+<!-- 退出迷宫确认 Modal -->
+<div id="exit-maze-modal" class="modal-overlay" style="display:none">
+    <div class="modal-box">
+        <h3>迷宫尚未保存</h3>
+        <p>当前迷宫进度未保存，是否保存后再退出？</p>
+        <div class="input-group" id="exit-name-group">
+            <input type="text" id="exit-save-name" placeholder="输入存档名称（保存时必须）">
+        </div>
+        <p id="exit-modal-error" class="error-msg"></p>
+        <div class="modal-buttons">
+            <button id="exit-save-btn" class="action-btn">💾 保存并退出</button>
+            <button id="exit-discard-btn" class="action-btn secondary">🗑️ 直接退出</button>
+            <button id="exit-cancel-btn" class="action-btn secondary">取消</button>
+        </div>
+    </div>
 </div>
 
 <script src="app.js"></script>

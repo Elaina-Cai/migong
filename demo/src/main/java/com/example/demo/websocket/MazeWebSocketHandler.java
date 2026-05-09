@@ -9,6 +9,10 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * 这是websocket服务端 功能是：监听websocket地址/ws/maze的所有消息，包括玩家移动、创建连接、断开连接
+ * 具体地址（/ws/maze）是写在websocket配置类那里，在添加websocket服务端的时候写上这个添加的websocket服务端监听的地址
+ */
 @Component
 public class MazeWebSocketHandler extends TextWebSocketHandler {
 
@@ -23,6 +27,11 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
         this.roomService = roomService;
     }
 
+    /**
+     * 建立连接，并且保存会话（保存session）
+     * @param session
+     * @throws Exception
+     */
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         String uri = session.getUri().toString();
@@ -78,6 +87,12 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
+    /**
+     * 断开连接，删除会话(删除session)
+     * @param session
+     * @param status
+     * @throws Exception
+     */
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
         String userId = (String) session.getAttributes().get("userId");
@@ -154,7 +169,16 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
     private void handleStart(String userId, JSONObject data) throws Exception {
         String roomId = data.getString("roomId");
         roomService.startGame(roomId, userId);
-        broadcastToRoom(roomId, "game_started", new JSONObject().put("message", "游戏开始！"));
+
+        // 广播游戏开始，并附带新迷宫数据
+        GameRoom room = roomService.getRoom(roomId);
+        JSONObject startData = new JSONObject();
+        startData.put("message", "游戏开始！");
+        startData.put("grid", room.getGrid());
+        startData.put("endRow", room.getEndRow());
+        startData.put("endCol", room.getEndCol());
+        startData.put("positions", room.getPositions());
+        broadcastToRoom(roomId, "game_started", startData);
     }
 
     private void handleMove(String userId, JSONObject data) throws Exception {
@@ -170,12 +194,14 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
         moveData.put("col", newPos[1]);
 
         if (won) {
+            long elapsed = (System.currentTimeMillis() - room.getStartTime()) / 1000;
+            moveData.put("elapsedSeconds", elapsed);
             broadcastToRoom(roomId, "winner", moveData);
         } else {
             broadcastToRoom(roomId, "player_moved", moveData);
         }
     }
-
+    //准备
     private void handleReady(String userId, JSONObject data) throws Exception {
         String roomId = data.getString("roomId");
         roomService.readyPlayer(roomId, userId);
@@ -184,7 +210,7 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
         rd.put("ready", true);
         broadcastToRoom(roomId, "player_ready", rd);
     }
-
+    //取消准备
     private void handleUnready(String userId, JSONObject data) throws Exception {
         String roomId = data.getString("roomId");
         roomService.unreadyPlayer(roomId, userId);
@@ -193,7 +219,7 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
         rd.put("ready", false);
         broadcastToRoom(roomId, "player_ready", rd);
     }
-
+    //离开
     private void handleLeave(String userId, JSONObject data, WebSocketSession session) throws Exception {
         String roomId = data.getString("roomId");
         boolean wasHost = userId.equals(roomService.getRoom(roomId).getHostUserId());
@@ -209,7 +235,7 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
         broadcastToRoom(roomId, "player_left", leaveData);
         sendMessage(session, "left", new JSONObject());
     }
-
+    //踢出
     private void handleKick(String userId, JSONObject data, WebSocketSession session) throws Exception {
         String roomId = data.getString("roomId");
         String targetId = data.getString("targetUserId");
@@ -238,7 +264,7 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
         info.put("endRow", room.getEndRow());
         info.put("endCol", room.getEndCol());
         info.put("started", room.isStarted());
-        // ✅ 新加：所有玩家的当前位置
+        //所有玩家的当前位置
         info.put("positions", room.getPositions()); // Map<String, int[]>
         return info;
     }

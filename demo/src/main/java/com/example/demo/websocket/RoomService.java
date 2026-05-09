@@ -27,6 +27,9 @@ public class RoomService {
         room.setEndRow(grid.length-2);
         room.setEndCol(grid[0].length-1);
         room.getPositions().put(userId, new int[]{1, 0});
+        room.setRows(rows);
+        room.setCols(cols);
+        room.setAlgorithm(algorithm);
         rooms.put(roomId, room);
         return room;
     }
@@ -50,7 +53,25 @@ public class RoomService {
         if (room == null) throw new RuntimeException("房间不存在");
         if (!room.getHostUserId().equals(userId)) throw new RuntimeException("只有房主才能开始游戏");
         if (!room.isAllReady()) throw new RuntimeException("还有玩家未准备");
+
+        // 重新生成迷宫
+        int[][] grid = MazeGenerator.generate(room.getRows(), room.getCols(), room.getAlgorithm());
+        grid[1][0] = 0;                              // 入口
+        grid[grid.length-2][grid[0].length-1] = 0;   // 出口
+        room.setGrid(grid);
+        room.setEndRow(grid.length-2);
+        room.setEndCol(grid[0].length-1);
+
+        // 重置所有玩家位置
+        for (String uid : room.getPlayers()) {
+            room.getPositions().put(uid, new int[]{1, 0});
+        }
+
+        // 清除准备状态（新一局需重新准备）
+        room.getReadyPlayers().clear();
+
         room.setStarted(true);
+        room.setStartTime(System.currentTimeMillis());
     }
 
     public int[] movePlayer(String roomId, String userId, String direction) {

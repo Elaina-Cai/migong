@@ -174,6 +174,10 @@ let gamePaused = false;
 let gameWon = false;
 let moving = false;             // 移动锁，防止请求堆积
 
+// 单人计时变量
+let gameStartTime = null;
+let timerInterval = null;
+
 // DOM 元素
 const mazeConfigPanel = document.getElementById('maze-config-panel');
 const mazeGameContainer = document.getElementById('maze-game-container');
@@ -183,6 +187,52 @@ const ctx = mazeCanvas ? mazeCanvas.getContext('2d') : null;
 // 离屏背景 Canvas
 const bgCanvas = document.getElementById('maze-bg-canvas');
 const bgCtx = bgCanvas ? bgCanvas.getContext('2d') : null;
+
+// 计时器工具函数
+function formatTime(sec) {
+    const m = String(Math.floor(sec / 60)).padStart(2, '0');
+    const s = String(sec % 60).padStart(2, '0');
+    return `${m}:${s}`;
+}
+
+function updateTimerDisplay() {
+    const el = document.getElementById('timer-display');
+    if (el && gameStartTime) {
+        const elapsed = Math.floor((Date.now() - gameStartTime) / 1000);
+        el.textContent = formatTime(elapsed);
+    } else if (el) {
+        el.textContent = '00:00';
+    }
+}
+function startTimer() {
+    stopTimer();
+    gameStartTime = Date.now();
+    updateTimerDisplay();
+    timerInterval = setInterval(updateTimerDisplay, 1000);
+}
+function stopTimer() {
+    if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+    }
+    updateTimerDisplay();
+}
+function pauseTimer() {
+    if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+    }
+}
+function resumeTimer() {
+    if (!gameStartTime || timerInterval) return;
+    updateTimerDisplay();
+    timerInterval = setInterval(updateTimerDisplay, 1000);
+}
+function resetTimer() {
+    stopTimer();
+    gameStartTime = null;
+    document.getElementById('timer-display').textContent = '00:00';
+}
 
 // 生成迷宫按钮
 document.getElementById('generate-maze-btn').addEventListener('click', async () => {
@@ -212,6 +262,7 @@ document.getElementById('generate-maze-btn').addEventListener('click', async () 
 
         // 绘制玩家初始位置
         if (ctx) drawPlayer();
+        startTimer();  // 开始计时
     } catch (e) {
         alert('生成迷宫失败：' + e.message);
     }
@@ -219,11 +270,24 @@ document.getElementById('generate-maze-btn').addEventListener('click', async () 
 
 // 重写返回按钮逻辑（确保参数面板显示）
 document.getElementById('back-to-mode').addEventListener('click', () => {
-    document.getElementById('single-setup').style.display = 'none';
-    document.getElementById('mode-select').style.display = 'block';
-    if (mazeGameContainer) mazeGameContainer.style.display = 'none';
-    if (mazeConfigPanel) mazeConfigPanel.style.display = 'block';
-    if (multiContainer) multiContainer.style.display = 'none';
+    const doBack = () => {
+        document.getElementById('single-setup').style.display = 'none';
+        document.getElementById('mode-select').style.display = 'block';
+        if (mazeGameContainer) mazeGameContainer.style.display = 'none';
+        if (mazeConfigPanel) mazeConfigPanel.style.display = 'block';
+        if (multiContainer) multiContainer.style.display = 'none';
+        currentMazeData = null;
+        grid = [];
+        gameWon = false;
+        gamePaused = false;
+        resetTimer(); // 重置计时
+    };
+
+    if (currentMazeData && currentMazeData.isSaved === 0 && mazeGameContainer.style.display !== 'none') {
+        showExitConfirmation(doBack, doBack);
+    } else {
+        doBack();
+    }
 });
 
 // 画布尺寸调整
@@ -336,6 +400,10 @@ async function movePlayer(direction) {
 
         if (gameWon) {
             document.getElementById('game-status').textContent = '🎉 恭喜通关！';
+            stopTimer(); // 停止计时
+            if (result.data.elapsedSeconds != null) {
+                document.getElementById('timer-display').textContent = formatTime(result.data.elapsedSeconds);
+            }
         }
         drawPlayer();
     } catch (e) {
@@ -368,6 +436,11 @@ window.addEventListener('keydown', (e) => {
 document.getElementById('pause-game-btn').addEventListener('click', () => {
     gamePaused = !gamePaused;
     document.getElementById('pause-game-btn').textContent = gamePaused ? '继续' : '暂停';
+    if (gamePaused) {
+        pauseTimer();
+    } else {
+        resumeTimer();
+    }
     drawPlayer();
 });
 
@@ -381,12 +454,21 @@ document.getElementById('reset-game-btn').addEventListener('click', () => {
 });
 
 document.getElementById('new-maze-btn').addEventListener('click', () => {
-    mazeGameContainer.style.display = 'none';
-    mazeConfigPanel.style.display = 'block';
-    currentMazeData = null;
-    grid = [];
-    gameWon = false;
-    gamePaused = false;
+    const doNewMaze = () => {
+        currentMazeData = null;
+        grid = [];
+        gameWon = false;
+        gamePaused = false;
+        resetTimer();
+        mazeGameContainer.style.display = 'none';
+        mazeConfigPanel.style.display = 'block';
+    };
+
+    if (currentMazeData && currentMazeData.isSaved === 0) {
+        showExitConfirmation(doNewMaze, doNewMaze); // 保存后执行 或 直接执行
+    } else {
+        doNewMaze();
+    }
 });
 
 // 窗口大小变化时重绘背景和玩家
@@ -417,9 +499,12 @@ let multiReadySet = new Set();
 let multiHostId = null;
 let multiStarted = false;
 let multiWon = false;
-let multiPaused = false;
 let multiMoving = false;
 let multiCellSize = 20;
+
+// 多人计时变量
+let multiGameStartTime = null;
+let multiTimerInterval = null;
 
 // DOM
 const multiContainer = document.getElementById('multi-container');
@@ -430,6 +515,35 @@ const multiCanvas = document.getElementById('multi-canvas');
 const multiCtx = multiCanvas ? multiCanvas.getContext('2d') : null;
 const multiBgCanvas = document.getElementById('multi-bg-canvas');
 const multiBgCtx = multiBgCanvas ? multiBgCanvas.getContext('2d') : null;
+
+// 多人计时工具函数
+function updateMultiTimerDisplay() {
+    const el = document.getElementById('multi-timer-display');
+    if (el && multiGameStartTime) {
+        const elapsed = Math.floor((Date.now() - multiGameStartTime) / 1000);
+        el.textContent = formatTime(elapsed);
+    } else if (el) {
+        el.textContent = '00:00';
+    }
+}
+function startMultiTimer() {
+    stopMultiTimer();
+    multiGameStartTime = Date.now();
+    updateMultiTimerDisplay();
+    multiTimerInterval = setInterval(updateMultiTimerDisplay, 1000);
+}
+function stopMultiTimer() {
+    if (multiTimerInterval) {
+        clearInterval(multiTimerInterval);
+        multiTimerInterval = null;
+    }
+    updateMultiTimerDisplay();
+}
+function resetMultiTimer() {
+    stopMultiTimer();
+    multiGameStartTime = null;
+    document.getElementById('multi-timer-display').textContent = '00:00';
+}
 
 // 连接 WebSocket
 function connectMultiWS() {
@@ -456,7 +570,7 @@ function handleWSMessage(msg) {
         case 'player_ready': updateReadyStatus(data.userId, data.ready); break;
         case 'game_started': startMultiGame(data); break;
         case 'player_moved': updateMultiPosition(data.userId, data.row, data.col); break;
-        case 'winner': showMultiWinner(data.userId); break;
+        case 'winner': showMultiWinner(data.userId, data.elapsedSeconds); break;
         case 'kicked': alert(data.message || '你被踢出了房间'); resetMultiUI(); break;
         case 'left': resetMultiUI(); break;
         case 'error': document.getElementById('room-message').textContent = data; break;
@@ -599,9 +713,17 @@ function startMultiGame(data) {
     waitingRoom.style.display = 'none';
     multiGameContainer.style.display = 'block';
     multiStarted = true;
+
+    // 更新迷宫数据（第二局已不同）
+    if (data.grid) multiGrid = data.grid;
+    if (data.endRow !== undefined) multiEndRow = data.endRow;
+    if (data.endCol !== undefined) multiEndCol = data.endCol;
+    if (data.positions) multiPlayersPos = data.positions;
+
     document.getElementById('multi-game-status').textContent = '竞速中...';
     initMultiCanvas();
     drawMultiMaze();
+    startMultiTimer();  // 开始多人计时
 }
 
 function initMultiCanvas() {
@@ -664,16 +786,45 @@ function updateMultiPosition(userId, row, col) {
     drawMultiMaze();
 }
 
-function showMultiWinner(userId) {
+function showMultiWinner(userId, elapsedSeconds) {
     multiWon = true;
-    document.getElementById('multi-game-status').textContent = `🏆 ${userId} 获胜！`;
-    alert(`${userId} 率先到达终点！`);
+    stopMultiTimer();
+    if (elapsedSeconds !== undefined) {
+        document.getElementById('multi-timer-display').textContent = formatTime(elapsedSeconds);
+    }
+    const timeStr = elapsedSeconds !== undefined ? formatTime(elapsedSeconds) : '未知';
+    document.getElementById('multi-game-status').textContent = `🏆 ${userId} 获胜！用时 ${timeStr}`;
+    alert(`${userId} 率先到达终点！用时 ${timeStr}`);
     drawMultiMaze();
+
+    // 自动返回房间等待室
+    setTimeout(() => {
+        multiGameContainer.style.display = 'none';
+        waitingRoom.style.display = 'block';
+
+        multiStarted = false;
+        multiWon = false;
+        resetMultiTimer();
+
+        // 清除所有准备状态
+        multiReadySet.clear();
+        document.querySelectorAll('#player-list .ready-tag').forEach(tag => {
+            tag.textContent = '⏳未准备';
+        });
+
+        // 房主显示开始游戏按钮（需重新准备后启用）
+        if (multiHostId === getUserId()) {
+            document.getElementById('start-game-btn').style.display = 'inline-block';
+            document.getElementById('start-game-btn').disabled = true;
+        }
+        const readyBtn = document.getElementById('ready-btn');
+        if (readyBtn) readyBtn.textContent = '准备';
+    }, 1500);
 }
 
 // ---- 移动 ----
 async function multiMovePlayer(direction) {
-    if (multiMoving || multiPaused || multiWon || !multiStarted) return;
+    if (multiMoving || multiWon || !multiStarted) return;
     multiMoving = true;
     sendWS('move', { roomId: multiRoomId, direction });
     // 本地也乐观更新（可选，这里等服务器广播后再更新）
@@ -691,6 +842,7 @@ function resetMultiUI() {
     multiReadySet.clear();
     multiStarted = false;
     multiWon = false;
+    resetMultiTimer();  // 重置多人计时
     document.getElementById('room-id-input').value = '';
     document.getElementById('room-message').textContent = '';
     document.getElementById('kick-target-select').innerHTML = '';
@@ -706,12 +858,7 @@ window.addEventListener('keydown', (e) => {
     else if (key === 'd' || key === 'arrowright') { e.preventDefault(); multiMovePlayer('right'); }
 });
 
-// 工具栏
-document.getElementById('multi-pause-btn').addEventListener('click', () => {
-    multiPaused = !multiPaused;
-    document.getElementById('multi-pause-btn').textContent = multiPaused ? '继续' : '暂停';
-});
-
+// 多人工具栏（只保留退出房间按钮）
 document.getElementById('multi-leave-game-btn').addEventListener('click', () => {
     sendWS('leave', { roomId: multiRoomId });
     resetMultiUI();
@@ -722,13 +869,26 @@ document.getElementById('multi-leave-game-btn').addEventListener('click', () => 
 
 // 确保进入多人模式时显示正确
 // 修改 switchPage 函数，添加多人容器隐藏逻辑
-const origSwitchPage = switchPage;
+const origSwitchPage = switchPage;  // 只保留这一次声明
 switchPage = function(pageName) {
     origSwitchPage(pageName);
     if (pageName === 'maze') {
         if (multiContainer) multiContainer.style.display = 'none';
+        updateSavedPanelVisibility();   // ← 加入这行
     }
 };
+// ========== 我的存档按钮 ==========
+document.getElementById('view-saves-btn').addEventListener('click', () => {
+    const panel = document.getElementById('saved-mazes-panel');
+    // 强制显示存档面板
+    panel.style.display = 'block';
+    // 重新加载存档列表
+    loadSavedMazesList();
+    // 平滑滚动到存档区域（300ms 防抖，避免按钮在动画期间触发多次）
+    setTimeout(() => {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+});
 // ========== 初始化 ==========
 function init() {
     const token = getToken();
@@ -740,3 +900,236 @@ function init() {
     }
 }
 init();
+// ========== 存档相关 DOM 元素 ==========
+const saveGameBtn = document.getElementById('save-game-btn');
+const saveModal = document.getElementById('save-modal');
+const saveMazeNameInput = document.getElementById('save-maze-name');
+const confirmSaveBtn = document.getElementById('confirm-save-btn');
+const cancelSaveBtn = document.getElementById('cancel-save-btn');
+const saveModalError = document.getElementById('save-modal-error');
+
+const loadConflictModal = document.getElementById('load-conflict-modal');
+const conflictSaveLoadBtn = document.getElementById('conflict-save-load-btn');
+const conflictDiscardLoadBtn = document.getElementById('conflict-discard-load-btn');
+const conflictCancelBtn = document.getElementById('conflict-cancel-btn');
+const conflictNameGroup = document.getElementById('conflict-name-group');
+const conflictSaveNameInput = document.getElementById('conflict-save-name');
+
+const savedMazesPanel = document.getElementById('saved-mazes-panel');
+const savedMazesList = document.getElementById('saved-mazes-list');
+
+let pendingLoadId = null;
+
+// ========== 保存按钮 ==========
+saveGameBtn.addEventListener('click', () => {
+    if (!currentMazeData) {
+        alert('没有正在进行的迷宫，无法保存');
+        return;
+    }
+    saveMazeNameInput.value = '';
+    saveModalError.textContent = '';
+    saveModal.style.display = 'flex';
+});
+
+cancelSaveBtn.addEventListener('click', () => {
+    saveModal.style.display = 'none';
+});
+
+confirmSaveBtn.addEventListener('click', async () => {
+    const mazeName = saveMazeNameInput.value.trim();
+    if (!mazeName) {
+        saveModalError.textContent = '请输入存档名称';
+        return;
+    }
+    try {
+        await request('/maze/save', {
+            method: 'POST',
+            body: JSON.stringify({ mazeName })
+        });
+        if (currentMazeData) {
+                    currentMazeData.isSaved = 1;
+                    currentMazeData.mazeName = mazeName; // 可选
+        }
+        saveModal.style.display = 'none';
+        alert('迷宫保存成功！');
+        await loadSavedMazesList();
+    } catch (e) {
+        saveModalError.textContent = e.message;
+    }
+});
+
+// ========== 存档列表 ==========
+async function loadSavedMazesList() {
+    try {
+        const result = await request('/maze/saved');   // ✅ 正确接口
+        const saves = result.data;
+        savedMazesList.innerHTML = saves.length ? '' : '<p style="color:#9b9b9b;">暂无存档</p>';
+        saves.forEach(save => {
+            const item = document.createElement('div');
+            item.className = 'save-item';
+            item.innerHTML = `
+                <span class="save-name">📁 ${save.mazeName}</span>
+                <span class="save-date">${new Date(save.savedAt).toLocaleString()}</span>
+                <button class="action-btn small load-save-btn" data-id="${save.id}">加载</button>
+            `;
+            savedMazesList.appendChild(item);
+        });
+
+        document.querySelectorAll('.load-save-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const saveId = Number(e.target.dataset.id);
+                if (currentMazeData) {
+                    pendingLoadId = saveId;
+                    loadConflictModal.style.display = 'flex';
+                    conflictNameGroup.style.display = 'none';
+                } else {
+                    await loadMazeById(saveId);
+                }
+            });
+        });
+    } catch (e) {
+        console.error('获取存档列表失败:', e.message);
+        savedMazesList.innerHTML = '<p style="color:#e94560;">加载存档列表失败</p>';
+    }
+}
+
+async function loadMazeById(saveId) {
+    try {
+        const result = await request('/maze/load', {
+            method: 'POST',
+            body: JSON.stringify({ mazeId: saveId, saveCurrent: false, currentMazeName: '' })
+        });
+        currentMazeData = result.data;
+        grid = JSON.parse(currentMazeData.gridData);
+        playerPos = { row: currentMazeData.playerRow, col: currentMazeData.playerCol };
+        gameWon = false;
+        gamePaused = false;
+        document.getElementById('game-status').textContent = '探索中...';
+
+        mazeConfigPanel.style.display = 'none';
+        mazeGameContainer.style.display = 'block';
+        resizeCanvas();
+        drawStaticBackground();
+        drawPlayer();
+        startTimer();  // 开始计时
+    } catch (e) {
+        alert('加载迷宫失败：' + e.message);
+    }
+}
+
+// ========== 冲突模态框 ==========
+conflictSaveLoadBtn.addEventListener('click', async () => {
+    conflictNameGroup.style.display = 'block';
+    const mazeName = conflictSaveNameInput.value.trim();
+    if (!mazeName) {
+        alert('请输入当前迷宫的名称');
+        return;
+    }
+    try {
+        await request('/maze/save', {
+            method: 'POST',
+            body: JSON.stringify({ mazeName })
+        });
+        loadConflictModal.style.display = 'none';
+        await loadMazeById(pendingLoadId);
+        pendingLoadId = null;
+    } catch (e) {
+        alert('操作失败：' + e.message);
+    }
+});
+// ========== 退出迷宫确认相关 ==========
+const exitModal = document.getElementById('exit-maze-modal');
+const exitSaveBtn = document.getElementById('exit-save-btn');
+const exitDiscardBtn = document.getElementById('exit-discard-btn');
+const exitCancelBtn = document.getElementById('exit-cancel-btn');
+const exitSaveNameInput = document.getElementById('exit-save-name');
+const exitModalError = document.getElementById('exit-modal-error');
+let pendingExitAction = null;
+
+function showExitConfirmation(onSaveAndExit, onDiscard) {
+    // 如果没有迷宫或已经保存，直接执行丢弃操作（无需弹窗）
+    if (!currentMazeData || currentMazeData.isSaved === 1) {
+        if (onDiscard) onDiscard();
+        return;
+    }
+    exitSaveNameInput.value = '';
+    exitModalError.textContent = '';
+    pendingExitAction = { onSaveAndExit, onDiscard };
+    exitModal.style.display = 'flex';
+}
+
+function hideExitModal() {
+    exitModal.style.display = 'none';
+    pendingExitAction = null;
+}
+
+exitSaveBtn.addEventListener('click', async () => {
+    const name = exitSaveNameInput.value.trim();
+    if (!name) {
+        exitModalError.textContent = '请输入存档名称';
+        return;
+    }
+    try {
+        await request('/maze/save', {
+            method: 'POST',
+            body: JSON.stringify({ mazeName: name })
+        });
+        if (currentMazeData) {
+            currentMazeData.isSaved = 1;
+            currentMazeData.mazeName = name;
+        }
+        const action = pendingExitAction;   // ← 保存
+        hideExitModal();                    // ← 隐藏
+        if (action && action.onSaveAndExit) {   // ✅ 改用 action
+                    action.onSaveAndExit();
+        }
+    } catch (e) {
+        exitModalError.textContent = e.message;
+    }
+});
+
+exitDiscardBtn.addEventListener('click', () => {
+    const action = pendingExitAction;   // ← 先保存
+    hideExitModal();                    // ← 再隐藏（会清空 pendingExitAction）
+    if (action && action.onDiscard) {
+        action.onDiscard();
+    }
+});
+
+exitCancelBtn.addEventListener('click', hideExitModal);
+conflictDiscardLoadBtn.addEventListener('click', async () => {
+    loadConflictModal.style.display = 'none';
+    await loadMazeById(pendingLoadId);
+    pendingLoadId = null;
+});
+
+conflictCancelBtn.addEventListener('click', () => {
+    loadConflictModal.style.display = 'none';
+    pendingLoadId = null;
+});
+
+// ========== 存档面板显示/隐藏 ==========
+function updateSavedPanelVisibility() {
+    const show = (singleSetupDiv.style.display !== 'none' && mazeGameContainer.style.display === 'none');
+    if (show) {
+        savedMazesPanel.style.display = 'block';
+        loadSavedMazesList();
+    } else {
+        savedMazesPanel.style.display = 'none';
+    }
+}
+
+// 监听游戏容器显示状态变化
+const observer = new MutationObserver(() => {
+    updateSavedPanelVisibility();
+});
+observer.observe(mazeGameContainer, { attributes: true, attributeFilter: ['style'] });
+
+// 浏览器关闭/刷新前提醒（仅当迷宫未保存）
+window.addEventListener('beforeunload', (e) => {
+    if (currentMazeData && currentMazeData.isSaved === 0) {
+        e.preventDefault();
+        e.returnValue = '您还有未保存的迷宫进度，确定离开吗？';
+        return e.returnValue;
+    }
+});

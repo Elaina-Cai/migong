@@ -20,7 +20,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(BusinessException.class)
     public Result<Void> handleBusinessException(BusinessException e) {
-        log.warn("业务异常：code={}, message={}", e.getCode(), e.getMessage());
+        log.warn("code={}, message={}", e.getCode(), e.getMessage());
         return Result.fail(e.getCode(), e.getMessage());
     }
     /**

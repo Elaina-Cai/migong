@@ -14,6 +14,10 @@ public class GameRoom {
     private int[][] grid;
     private int endRow, endCol;
     private boolean started = false;
+    private long startTime;   // 游戏开始时间戳（毫秒）
+    private int rows;
+    private int cols;
+    private String algorithm;
 
     private Map<String, int[]> positions = new ConcurrentHashMap<>(); // userId -> [row, col]
     public Map<String, int[]> getPositions() { return positions; }

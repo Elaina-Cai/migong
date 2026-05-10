@@ -1,6 +1,11 @@
 package com.example.demo.websocket;
 
+import com.example.demo.entity.ChatMessage;
+import com.example.demo.entity.User;
 import com.example.demo.mapper.OnlineUserMapper;
+import com.example.demo.mapper.UserMapper;
+import com.example.demo.service.ChatMessageService;
+import com.example.demo.service.FriendService;
 import com.example.demo.service.MultiGameService;
 import com.example.demo.utils.JwtUtil;
 import org.json.JSONObject;
@@ -9,13 +14,40 @@ import org.springframework.web.socket.*;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 这是websocket服务端 功能是：监听websocket地址/ws/maze的所有消息，包括玩家移动、创建连接、断开连接
- * 具体地址（/ws/maze）是写在websocket配置类那里，在添加websocket服务端的时候写上这个添加的websocket服务端监听的地址
+ * MazeWebSocketHandler 是整个多人游戏和即时通讯的 WebSocket 消息总入口。它同时承担了以下几个核心职责：
+ * 1. 用户连接管理（在线状态）
+ * 每个 WebSocket 连接建立时，通过 URL 参数中的 JWT 鉴权，拿到 userId 和 username。
+ * 将连接放入 userSessions（一个用户可以有多个窗口，对应多个连接）。
+ * 使用 connectionCount 计数器判断用户是否首次上线：
+ * 如果是第一次在线 → 向 online_users 表插入记录（标记在线）。
+ * 连接关闭时：
+ * 从 userSessions 移除该连接。
+ * 递减计数器，当计数器归零时删除 online_users 表中的在线记录（标记离线）。
+ * 2. 多人迷宫游戏房间
+ * 路由所有游戏相关消息：create、join、start、move、ready、unready、leave、kick。
+ * 委托给 RoomService 和 MultiGameService 处理房间创建、加入、开始、移动、胜负判定等逻辑。
+ * 将游戏状态变化（玩家加入、移动、胜负等）广播给同一房间的所有在线玩家。
+ * 3. 好友聊天（私聊）
+ * 处理 chat_send 消息类型。
+ * 校验双方是否为好友（调用 FriendService.isFriend）。
+ * 将消息存入 chat_message 表（无论对方在线与否，记录所有消息）。
+ * 对方在线 → 状态存为 1（已接收），并立即通过 WebSocket 推送 chat_receive 消息给对方。
+ * 对方离线 → 状态存为 0（未接收），等待对方上线后推送。
+ * 4. 离线聊天消息补推
+ * 在 afterConnectionEstablished 中，用户连接成功后，检查 chat_message 表中所有发给该用户且状态为 0 的消息。
+ * 逐条推送给用户，并将状态更新为 1（已接收），确保用户不会错过离线期间的消息。
+ * 5. 辅助功能
+ * 提供 getOnlineCount() 静态方法，统计当前活跃连接数（用于在线人数展示）。
+ * 提供 getOnlineUserIds() 静态方法，返回在线用户 ID 集合（可用于好友列表在线状态，但最近版本已改用数据库 online_users 表）。
+ * 提供 sendMessage 和 broadcastToRoom 工具方法，封装消息的 JSON 序列化和多连接发送。
+ * 总结
+ * 这个类是一个 集多人游戏实时交互 + 好友私聊 + 在线状态同步 + 离线消息缓存 于一体的 WebSocket 核心处理器。它复用同一个连接实现了多种业务功能，避免了重复鉴权和管理多套 WebSocket 连接，设计紧凑且功能边界清晰。
  */
 @Component
 public class MazeWebSocketHandler extends TextWebSocketHandler {
@@ -24,6 +56,9 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
     private final RoomService roomService;
     private final MultiGameService multiGameService;
     private final OnlineUserMapper onlineUserMapper;
+    private final ChatMessageService chatMessageService;
+    private final FriendService friendService;   // 用于校验好友关系
+    private final UserMapper userMapper;
 
     // userId -> 该用户的所有活跃连接（支持同一账号多窗口）
     private static final ConcurrentHashMap<String, Set<WebSocketSession>> userSessions = new ConcurrentHashMap<>();
@@ -32,11 +67,17 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
 
     public MazeWebSocketHandler(JwtUtil jwtUtil, RoomService roomService,
                                 MultiGameService multiGameService,
-                                OnlineUserMapper onlineUserMapper) {
+                                OnlineUserMapper onlineUserMapper,
+                                ChatMessageService chatMessageService,
+                                FriendService friendService,
+                                UserMapper userMapper) {
         this.jwtUtil = jwtUtil;
         this.roomService = roomService;
         this.multiGameService = multiGameService;
         this.onlineUserMapper = onlineUserMapper;
+        this.chatMessageService = chatMessageService;
+        this.friendService = friendService;
+        this.userMapper = userMapper;
     }
 
     /**
@@ -71,6 +112,22 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
         userSessions.computeIfAbsent(userIdStr, k -> ConcurrentHashMap.newKeySet()).add(session);
         session.getAttributes().put("userId", userIdStr);
         System.out.println("用户 " + userIdStr + " 上线，当前在线用户数：" + userSessions.size());
+        // 拉取并推送离线消息
+        List<ChatMessage> offlineMsgs = chatMessageService.fetchAndMarkReceived(userId);
+        if (!offlineMsgs.isEmpty()) {
+            for (ChatMessage msg : offlineMsgs) {
+                // 从数据库查询发送者用户名
+                User sender = userMapper.selectById(msg.getFromUserId());
+                String senderUsername = (sender != null) ? sender.getUsername() : "未知用户";
+
+                JSONObject chatMsg = new JSONObject();
+                chatMsg.put("fromUserId", msg.getFromUserId().toString());
+                chatMsg.put("fromUsername", senderUsername);
+                chatMsg.put("content", msg.getContent());
+                chatMsg.put("timestamp", msg.getCreatedAt().toString());
+                sendMessage(session, "chat_receive", chatMsg);
+            }
+        }
     }
 
     @Override
@@ -102,6 +159,7 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
                 case "unready":handleUnready(userId, data); break;
                 case "leave":  handleLeave(userId, data, session); break;
                 case "kick":   handleKick(userId, data, session); break;
+                case "chat_send": handleChatSend(userId, data, session); break;
                 default: sendMessage(session, "error", "未知消息类型: " + type);
             }
         } catch (Exception e) {
@@ -128,8 +186,8 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
                 }
             }
             // 更新连接计数
-            int count = connectionCount.compute(userId, (k, v) -> (v == null || v <= 1) ? null : v - 1);
-            if (count == 0) {
+            Integer count = connectionCount.compute(userId, (k, v) -> (v == null || v <= 1) ? null : v - 1);
+            if (count == null) {
                 // 所有连接都断开，从 online_users 表中删除
                 onlineUserMapper.deleteById(Long.parseLong(userId));
             }
@@ -342,5 +400,48 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
             }
         }
         return onlineIds;
+    }
+
+    /**
+     * 全量存储 + 在线推送
+     * @param fromUserId
+     * @param data
+     * @param session
+     * @throws Exception
+     */
+    private void handleChatSend(String fromUserId, JSONObject data, WebSocketSession session) throws Exception {
+        String toUserId = data.getString("toUserId");
+        String content = data.getString("content");
+
+        // 校验好友关系
+        if (!friendService.isFriend(Long.parseLong(fromUserId), Long.parseLong(toUserId))) {
+            sendMessage(session, "error", "你们还不是好友，无法发送消息");
+            return;
+        }
+
+        // 判断接收方是否在线
+        boolean online = userSessions.containsKey(toUserId) &&
+                userSessions.get(toUserId).stream().anyMatch(WebSocketSession::isOpen);
+
+        // 存入数据库，状态根据在线决定
+        int status = online ? 1 : 0;
+        chatMessageService.save(Long.parseLong(fromUserId), Long.parseLong(toUserId), content, status);
+
+        // 如果在线，立即推送
+        if (online) {
+            String fromUsername = (String) session.getAttributes().get("username");
+            JSONObject chatMsg = new JSONObject();
+            chatMsg.put("fromUserId", fromUserId);
+            chatMsg.put("fromUsername", fromUsername);
+            chatMsg.put("content", content);
+            chatMsg.put("timestamp", System.currentTimeMillis());
+
+            Set<WebSocketSession> targetSessions = userSessions.get(toUserId);
+            for (WebSocketSession s : targetSessions) {
+                if (s.isOpen()) {
+                    sendMessage(s, "chat_receive", chatMsg);
+                }
+            }
+        }
     }
 }

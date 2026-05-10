@@ -57,6 +57,7 @@ const navItems = document.querySelectorAll('.nav-item');
 const pages = document.querySelectorAll('.page');
 
 let isLoginMode = true;
+let unreadChatCount = {};  // key: friendUserId, value: 未读消息数
 
 // ========== 切换登录/注册 ==========
 function toggleMode() {
@@ -94,6 +95,8 @@ function showGameHall(username) {
     displayUsername.textContent = username;
     heroUsername.textContent = username;
     switchPage('home');
+    // 新增：登录后立即建立 WebSocket 连接，使聊天等功能可用
+    connectMultiWS();
 }
 
 function switchPage(pageName) {
@@ -625,6 +628,10 @@ function handleWSMessage(msg) {
             multiInRoom = false;
             if (ws) { ws.close(); ws = null; }
             resetMultiUI();
+            break;
+        case 'chat_receive':
+            // data = { fromUserId, fromUsername, content, timestamp }
+            appendChatMessage(data);
             break;
         case 'error': document.getElementById('room-message').textContent = data; break;
     }
@@ -1399,11 +1406,26 @@ async function renderFriendsList() {
                         ${f.online ? '在线' : '离线'}
                     </div>
                 </div>
+                <button class="action-btn small friend-chat-btn" onclick="openChat(${f.userId}, '${f.username}')">
+                    聊天${unreadChatCount[f.userId] ? ` <span class="chat-unread-badge">${unreadChatCount[f.userId]}</span>` : ''}
+                </button>
+                <button class="action-btn small friend-remove-btn" onclick="removeFriend(${f.userId}, '${f.username}')">删除</button>
             </div>
         `).join('');
     } catch (e) {
         console.error('获取好友列表失败', e);
         container.innerHTML = '<div class="no-friends">加载失败，请稍后重试</div>';
+    }
+}
+async function removeFriend(friendUserId, username) {
+    if (!confirm(`确定要删除好友 ${username} 吗？`)) return;
+    try {
+        await request(`/friend/remove/${friendUserId}`, { method: 'DELETE' });
+        alert(`已删除好友 ${username}`);
+        renderFriendsList();           // 刷新好友列表
+        loadPendingRequests();         // 刷新信封（避免删除的是刚同意的好友，状态残留）
+    } catch (e) {
+        alert('删除失败：' + e.message);
     }
 }
 renderFriendsList();
@@ -1501,3 +1523,102 @@ function initEnvelope() {
         header.addEventListener('click', toggleRequests);
     }
 }
+// ========== 好友聊天 ==========
+let activeChatFriendId = null;
+let activeChatFriendName = null;
+
+// 打开聊天窗口
+function openChat(friendId, friendName) {
+    // 清零该好友的未读计数
+    delete unreadChatCount[friendId];
+    renderFriendsList();
+
+    activeChatFriendId = friendId;
+    activeChatFriendName = friendName;
+    document.getElementById('chat-title').textContent = '与 ' + friendName + ' 聊天';
+    document.getElementById('chat-messages').innerHTML = '';
+    document.getElementById('chat-modal').style.display = 'flex';
+    document.getElementById('chat-input').value = '';
+    loadChatHistory(friendId);
+}
+
+// 关闭聊天窗口
+function closeChat() {
+    document.getElementById('chat-modal').style.display = 'none';
+    activeChatFriendId = null;
+    activeChatFriendName = null;
+}
+
+// 加载历史聊天记录
+async function loadChatHistory(friendId) {
+    try {
+        const result = await request(`/chat/history?friendUserId=${friendId}`);
+        const messages = result.data || [];
+        const container = document.getElementById('chat-messages');
+        container.innerHTML = '';
+        if (messages.length === 0) {
+            container.innerHTML = '<div style="color:#666; text-align:center; padding:20px;">暂无聊天记录</div>';
+            return;
+        }
+        messages.forEach(msg => {
+            displayChatMessage(
+                msg.fromUserId,
+                (msg.fromUserId === Number(getUserId())) ? '我' : activeChatFriendName,
+                msg.content,
+                msg.createdAt
+            );
+        });
+    } catch (e) {
+        console.error('加载聊天记录失败', e);
+        document.getElementById('chat-messages').innerHTML = '<div style="color:#e94560; text-align:center;">加载失败</div>';
+    }
+}
+
+// 在聊天窗口中显示一条消息
+function displayChatMessage(userId, username, content, timestamp) {
+    const container = document.getElementById('chat-messages');
+    const div = document.createElement('div');
+    const time = timestamp ? new Date(timestamp).toLocaleTimeString() : '';
+    div.innerHTML = `<span class="msg-sender">${username}:</span> ${escapeHtml(content)}<span class="msg-time">${time}</span>`;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+}
+
+// 简单的转义函数，防止XSS
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// 发送聊天消息
+function sendChatMessage() {
+    const input = document.getElementById('chat-input');
+    const content = input.value.trim();
+    if (!content || !activeChatFriendId) return;
+    sendWS('chat_send', { toUserId: String(activeChatFriendId), content });
+    // 本地显示自己发送的消息
+    displayChatMessage(getUserId(), '我', content, new Date().toISOString());
+    input.value = '';
+}
+
+// 处理接收到的聊天消息（WebSocket 推送）
+function appendChatMessage(data) {
+    const { fromUserId, fromUsername, content, timestamp } = data;
+    // 如果当前聊天窗口正与该用户对话，则直接显示
+    if (String(fromUserId) === String(activeChatFriendId)) {
+        displayChatMessage(fromUserId, fromUsername, content, timestamp);
+    } else {
+        // 否则增加未读计数并刷新好友列表
+        unreadChatCount[fromUserId] = (unreadChatCount[fromUserId] || 0) + 1;
+        renderFriendsList();
+        console.log(`收到 ${fromUsername} 的消息: ${content}`);
+    }
+}
+
+// 绑定聊天窗口的关闭、发送按钮及回车事件
+document.getElementById('chat-close-btn').addEventListener('click', closeChat);
+document.getElementById('chat-send-btn').addEventListener('click', sendChatMessage);
+document.getElementById('chat-input').addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') sendChatMessage();
+});

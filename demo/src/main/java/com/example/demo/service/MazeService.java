@@ -1,5 +1,6 @@
 package com.example.demo.service;
 
+import com.example.demo.dto.LeaderboardResponse;
 import com.example.demo.dto.MazeGenerateRequest;
 import com.example.demo.entity.Maze;
 
@@ -20,4 +21,6 @@ public interface MazeService {
     Maze loadMaze(Long userId, Long mazeId, boolean saveCurrent, String currentMazeName);
 
     void deleteSavedMaze(Long userId, Long mazeId);
+
+    LeaderboardResponse getLeaderboard(Long currentUserId, String algorithm, Integer rows, Integer cols);
 }

@@ -244,8 +244,9 @@ body {
 
 .quick-actions {
     display: flex;
-    gap: 20px;
     flex-wrap: wrap;
+    gap: 15px;
+    justify-content: center;
 }
 .action-card {
     flex: 1;
@@ -853,5 +854,487 @@ body {
     min-width: 80px;
     display: inline-block;
     text-align: center;
+}
+/* ========== 排行榜页面样式 ========== */
+.leaderboard-container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 10px 0;
+}
+
+.leaderboard-title {
+    text-align: center;
+    color: #f0e6d2;
+    font-size: 1.8rem;
+    margin-bottom: 20px;
+    text-shadow: 0 0 10px #c8aa6e80;
+}
+
+/* 筛选区域 */
+.leaderboard-filters {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 25px;
+    flex-wrap: wrap;
+}
+
+.leaderboard-filters select {
+    background: #1a1a1a;
+    color: #ccc;
+    border: 1px solid #333;
+    padding: 8px 14px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    outline: none;
+    cursor: pointer;
+    transition: border 0.2s;
+}
+
+.leaderboard-filters select:focus {
+    border-color: #c8aa6e;
+}
+
+#lb-query-btn {
+    padding: 8px 20px;
+    font-size: 0.9rem;
+}
+
+/* 表格样式 */
+.leaderboard-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 0 15px rgba(0,0,0,0.6);
+}
+
+.leaderboard-table th,
+.leaderboard-table td {
+    padding: 10px 8px;
+    text-align: center;
+    color: #ccc;
+    border-bottom: 1px solid #2a2a2a;
+    font-size: 0.85rem;
+}
+
+.leaderboard-table th {
+    background: #141414;
+    color: #c8aa6e;
+    font-weight: bold;
+    font-size: 0.9rem;
+}
+
+.leaderboard-table tbody tr:hover {
+    background: #1f1f1f;
+}
+
+/* 前三名特殊颜色 */
+.rank-gold {
+    color: #ffd700 !important;
+    font-weight: bold;
+}
+.rank-silver {
+    color: #c0c0c0 !important;
+    font-weight: bold;
+}
+.rank-bronze {
+    color: #cd7f32 !important;
+    font-weight: bold;
+}
+
+/* 我的排名卡片 */
+.my-rank-card {
+    margin-top: 30px;
+    background: #1a1a1a;
+    border: 1px solid #c8aa6e33;
+    border-radius: 6px;
+    padding: 1.5rem;
+    box-shadow: 0 0 15px rgba(200,170,110,0.2);
+}
+
+.my-rank-card h3 {
+    color: #c8aa6e;
+    margin-bottom: 1rem;
+    font-size: 1.2rem;
+}
+
+.my-rank-detail {
+    color: #ccc;
+    line-height: 1.8;
+}
+
+.my-rank-detail span {
+    color: #f0e6d2;
+    font-weight: bold;
+}
+
+.no-data {
+    text-align: center;
+    color: #9b9b9b;
+    padding: 20px;
+}
+/* 排行榜切换选项卡 */
+.leaderboard-tabs {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+.lb-tab {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    color: #ccc;
+    padding: 8px 24px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: 0.2s;
+}
+.lb-tab.active {
+    background: #c8aa6e;
+    color: #0a0a0a;
+    border-color: #c8aa6e;
+    font-weight: bold;
+}
+.lb-tab:hover {
+    border-color: #c8aa6e;
+}
+/* ========== 主页左右布局 ========== */
+.home-content {
+    display: flex;
+    gap: 30px;
+    max-width: 1200px;
+    margin: 0 auto;
+    align-items: flex-start;
+}
+
+.home-left {
+    flex: 1;                         /* 左侧自动伸缩 */
+    max-width: 700px;                /* 限制最大宽度，避免过宽 */
+}
+
+.home-right {
+    flex: 0 0 320px;                 /* 固定宽度，不再伸缩 */
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+}
+
+/* ========== 搜索玩家区域 ========== */
+.search-section {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    padding: 15px;
+}
+
+.search-bar {
+    display: flex;
+    align-items: center;
+    background: #0e0e0e;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 6px 12px;
+    transition: border-color 0.2s;
+}
+
+.search-bar:focus-within {
+    border-color: #c8aa6e;
+    box-shadow: 0 0 8px rgba(200,170,110,0.3);
+}
+
+.search-icon {
+    font-size: 1.1rem;
+    margin-right: 8px;
+    color: #c8aa6e;
+}
+
+.search-bar input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: #f0e6d2;
+    font-size: 0.95rem;
+    outline: none;
+}
+
+.search-bar input::placeholder {
+    color: #777;
+}
+
+#search-player-btn {
+    background: linear-gradient(180deg, #c8aa6e, #9b8352);
+    border: none;
+    border-radius: 3px;
+    color: #0a0a0a;
+    font-weight: bold;
+    padding: 5px 14px;
+    cursor: pointer;
+    margin-left: 10px;
+    transition: all 0.2s;
+    font-size: 0.9rem;
+}
+
+#search-player-btn:hover {
+    background: linear-gradient(180deg, #dbbd7a, #b3945c);
+    box-shadow: 0 0 10px rgba(200,170,110,0.5);
+}
+
+.search-results {
+    margin-top: 10px;
+    background: #111;
+    border: 1px solid #2a2a2a;
+    border-radius: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.player-result-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid #2a2a2a;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.player-result-item:last-child {
+    border-bottom: none;
+}
+
+.player-result-item:hover {
+    background: #1f1f1f;
+}
+
+.player-result-item img.player-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    object-fit: cover;
+    margin-right: 12px;
+    background: #2a2a2a;
+}
+
+.player-result-item .player-info {
+    flex: 1;
+}
+
+.player-result-item .player-name {
+    font-weight: bold;
+    color: #f0e6d2;
+}
+
+.player-result-item .player-stats {
+    font-size: 0.8rem;
+    color: #9b9b9b;
+}
+
+/* ========== 好友列表 ========== */
+.friends-section {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    padding: 15px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.friends-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.friends-header h3 {
+    color: #c8aa6e;
+    font-size: 1.2rem;
+    margin: 0;
+}
+
+.friends-list {
+    flex: 1;
+    overflow-y: auto;
+    max-height: 300px;
+    padding-right: 5px;
+}
+
+.friend-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 10px;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.friend-item:hover {
+    background: #252525;
+}
+
+.friend-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #2a2a2a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 12px;
+    font-size: 1rem;
+    color: #c8aa6e;
+}
+
+.friend-info {
+    flex: 1;
+}
+
+.friend-name {
+    font-weight: bold;
+    color: #f0e6d2;
+}
+
+.friend-status {
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.status-dot.online { background: #4f8a4b; }
+.status-dot.offline { background: #555; }
+
+.no-friends {
+    text-align: center;
+    color: #9b9b9b;
+    padding: 20px;
+    font-size: 0.9rem;
+}
+.search-clear {
+    margin-left: 8px;
+    color: #999;
+    cursor: pointer;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+}
+.search-clear:hover {
+    color: #c8aa6e;
+}
+.player-result-item .add-friend-inline {
+    flex-shrink: 0;           /* 防止按钮被压缩 */
+    margin-left: 10px;
+    padding: 4px 10px;
+    font-size: 0.8rem;
+    background: #444;
+    border: 1px solid #666;
+    color: #ccc;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: all 0.2s;
+}
+
+.player-result-item .add-friend-inline:hover {
+    background: #c8aa6e;
+    color: #0a0a0a;
+    border-color: #c8aa6e;
+}
+.req-username {
+    color: #f0e6d2;
+    font-size: 0.85rem;
+}
+.req-actions .action-btn.small {
+    padding: 3px 10px;
+    font-size: 0.8rem;
+    margin-left: 5px;
+}
+/* ========== 好友申请信封 ========== */
+.friend-requests-section {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    padding: 0;
+    margin-bottom: 15px;
+    overflow: hidden;
+    transition: all 0.3s;
+}
+
+.envelope-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 15px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.2s;
+}
+.envelope-header:hover {
+    background: #252525;
+}
+
+.envelope-icon {
+    font-size: 1.2rem;
+}
+.envelope-text {
+    color: #c8aa6e;
+    font-size: 0.95rem;
+    font-weight: bold;
+    flex: 1;
+}
+.envelope-badge {
+    background: #e94560;
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: bold;
+    min-width: 20px;
+    height: 20px;
+    line-height: 20px;
+    text-align: center;
+    border-radius: 10px;
+    padding: 0 5px;
+}
+
+.friend-requests-list {
+    border-top: 1px solid #2a2a2a;
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 5px 0;
+}
+
+.friend-request-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 15px;
+    border-bottom: 1px solid #2a2a2a;
+    transition: background 0.2s;
+}
+.friend-request-item:last-child {
+    border-bottom: none;
+}
+.friend-request-item:hover {
+    background: #1f1f1f;
+}
+
+.req-username {
+    color: #f0e6d2;
+    font-size: 0.85rem;
+}
+
+.req-actions .action-btn.small {
+    padding: 3px 10px;
+    font-size: 0.8rem;
+    margin-left: 5px;
 }
 }

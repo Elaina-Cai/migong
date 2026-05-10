@@ -69,19 +69,53 @@
                 <h1>欢迎，<span id="hero-username"></span></h1>
                 <p>选择你的冒险，深入无尽迷宫</p>
             </div>
-            <div class="quick-actions">
-                <button class="action-card" id="start-maze-btn">
-                    <span class="action-icon">⚔️</span>
-                    <span>快速开始</span>
-                </button>
-                <button class="action-card" onclick="alert('排行榜功能开发中')">
-                    <span class="action-icon">📊</span>
-                    <span>排行榜</span>
-                </button>
-                <button class="action-card" onclick="alert('设置功能开发中')">
-                    <span class="action-icon">🎨</span>
-                    <span>界面定制</span>
-                </button>
+            <div class="home-content">
+                <!-- 左侧：快速操作区 -->
+                <div class="home-left">
+                    <div class="quick-actions">
+                        <button class="action-card" id="start-maze-btn">
+                            <span class="action-icon">⚔️</span>
+                            <span>快速开始</span>
+                        </button>
+                        <button class="action-card" onclick="switchPage('leaderboard')">
+                            <span class="action-icon">📊</span>
+                            <span>排行榜</span>
+                        </button>
+                        <button class="action-card" onclick="switchPage('settings')">
+                            <span class="action-icon">🎨</span>
+                            <span>界面定制</span>
+                        </button>
+                    </div>
+                </div>
+                <!-- 右侧：搜索 + 好友列表 -->
+                <div class="home-right">
+                    <div class="search-section">
+                        <div class="search-bar">
+                            <span class="search-icon">🔍</span>
+                            <input type="text" id="player-search-input" placeholder="搜索玩家名称...">
+                            <span id="search-clear" class="search-clear" style="display:none;">✖</span>
+                        </div>
+                        <div id="search-results" class="search-results" style="display: none;"></div>
+                    </div>
+                    <div class="friend-requests-section" id="friend-requests-section">
+                        <div class="envelope-header" id="envelope-header">
+                            <span class="envelope-icon">📨</span>
+                            <span class="envelope-text">好友申请</span>
+                            <span class="envelope-badge" id="envelope-badge" style="display:none;">0</span>
+                        </div>
+                        <div id="friend-requests-list" class="friend-requests-list" style="display:none;">
+                            <!-- 动态渲染 -->
+                        </div>
+                    </div>
+                    <div class="friends-section">
+                        <div class="friends-header">
+                            <h3>好友列表</h3>
+                        </div>
+                        <div id="friends-list" class="friends-list">
+                            <!-- 动态渲染好友 -->
+                        </div>
+                    </div>
+                </div>
             </div>
         </section>
 
@@ -250,11 +284,82 @@
             </div>
         </section>
 
-        <!-- 排行榜占位页 -->
         <section id="page-leaderboard" class="page">
-            <div class="placeholder">
-                <h2>🏆 排行榜</h2>
-                <p>成就与荣耀将在此展示。</p>
+            <div class="leaderboard-container">
+                <h2 class="leaderboard-title">🏆 排行榜</h2>
+
+                <!-- 榜单切换按钮 -->
+                <div class="leaderboard-tabs">
+                    <button id="tab-single" class="lb-tab active">🏆 单人榜</button>
+                    <button id="tab-multi" class="lb-tab">👥 多人榜</button>
+                </div>
+
+                <!-- 筛选区域（仅单人榜显示） -->
+                <div id="single-filters" class="leaderboard-filters">
+                    <select id="lb-algorithm">
+                        <option value="dfs">DFS</option>
+                        <option value="prim">Prim</option>
+                        <option value="recursive">递归分割</option>
+                    </select>
+                    <select id="lb-rows">
+                        <option value="21">21 行</option>
+                        <option value="31">31 行</option>
+                        <option value="51">51 行</option>
+                    </select>
+                    <select id="lb-cols">
+                        <option value="21">21 列</option>
+                        <option value="31">31 列</option>
+                        <option value="51">51 列</option>
+                    </select>
+                    <button id="lb-query-btn" class="action-btn small">查询</button>
+                </div>
+
+                <!-- 单人排行榜表格 -->
+                <div id="single-table-wrapper">
+                    <table class="leaderboard-table">
+                        <thead>
+                        <tr>
+                            <th>排名</th>
+                            <th>用户ID</th>
+                            <th>用户名</th>
+                            <th>迷宫名称</th>
+                            <th>用时</th>
+                            <th>尺寸</th>
+                            <th>算法</th>
+                            <th>通关日期</th>
+                        </tr>
+                        </thead>
+                        <tbody id="leaderboard-tbody"></tbody>
+                    </table>
+                </div>
+
+                <!-- 多人排行榜表格（初始隐藏） -->
+                <div id="multi-table-wrapper" style="display:none;">
+                    <table class="leaderboard-table">
+                        <thead>
+                        <tr>
+                            <th>排名</th>
+                            <th>用户ID</th>
+                            <th>用户名</th>
+                            <th>获胜次数</th>
+                            <th>最快用时</th>
+                        </tr>
+                        </thead>
+                        <tbody id="multi-leaderboard-tbody"></tbody>
+                    </table>
+                </div>
+
+                <!-- 单人我的排名卡片 -->
+                <div id="my-rank-card" class="my-rank-card" style="display: none;">
+                    <h3>🎯 我的最佳成绩（单人）</h3>
+                    <div id="my-rank-detail" class="my-rank-detail"></div>
+                </div>
+
+                <!-- 多人我的排名卡片（初始隐藏） -->
+                <div id="multi-my-rank-card" class="my-rank-card" style="display: none;">
+                    <h3>🎯 我的战绩（多人）</h3>
+                    <div id="multi-my-rank-detail" class="my-rank-detail"></div>
+                </div>
             </div>
         </section>
 

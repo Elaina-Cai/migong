@@ -2,10 +2,14 @@ package com.example.demo.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.example.demo.dto.LeaderboardItem;
+import com.example.demo.dto.LeaderboardResponse;
 import com.example.demo.dto.MazeGenerateRequest;
 import com.example.demo.entity.Maze;
+import com.example.demo.entity.User;
 import com.example.demo.exception.BusinessException;
 import com.example.demo.mapper.MazeMapper;
+import com.example.demo.mapper.UserMapper;
 import com.example.demo.service.MazeService;
 import com.example.demo.utils.MazeGenerator;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -14,13 +18,16 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class MazeServiceImpl implements MazeService {
 
+    private final UserMapper userMapper;
     private final MazeMapper mazeMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final int MAX_SAVED_MAZES = 10;
@@ -252,5 +259,102 @@ public class MazeServiceImpl implements MazeService {
         } catch (JsonProcessingException e) {
             throw new BusinessException(500, "迷宫数据解析失败");
         }
+    }
+
+    @Override
+    public LeaderboardResponse getLeaderboard(Long currentUserId, String algorithm, Integer rows, Integer cols) {
+        // 1. 构建查询条件
+        LambdaQueryWrapper<Maze> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Maze::getStatus, 2)
+                .eq(Maze::getIsSaved, 1);
+
+        if (algorithm != null && !algorithm.trim().isEmpty()) {
+            wrapper.eq(Maze::getAlgorithm, algorithm.trim());
+        }
+        if (rows != null) {
+            wrapper.eq(Maze::getRowsNum, rows);
+        }
+        if (cols != null) {
+            wrapper.eq(Maze::getColsNum, cols);
+        }
+
+        // 2. 排序并截取前50
+        wrapper.orderByAsc(Maze::getElapsedSeconds)
+                .last("LIMIT 50");
+
+        List<Maze> mazeList = mazeMapper.selectList(wrapper);
+
+        // 3. 收集所有 userId，批量查询用户
+        List<Long> userIds = mazeList.stream()
+                .map(Maze::getUserId)
+                .distinct()
+                .collect(Collectors.toList());
+        List<User> users = userMapper.selectBatchIds(userIds);
+        Map<Long,String> usernameMap = users.stream()
+                .collect(Collectors.toMap(User::getUserId, User::getUsername));
+
+        // 4. 组装 topList
+        List<LeaderboardItem> topList = new ArrayList<>();
+        for (int i = 0; i < mazeList.size(); i++) {
+            Maze m = mazeList.get(i);
+            LeaderboardItem item = new LeaderboardItem();
+            item.setRank(i + 1);
+            item.setUserId(m.getUserId());
+            item.setUsername(usernameMap.getOrDefault(m.getUserId(), "未知用户"));
+            item.setMazeName(m.getMazeName());
+            item.setElapsedSeconds(m.getElapsedSeconds());
+            item.setAlgorithm(m.getAlgorithm());
+            item.setRowsNum(m.getRowsNum());
+            item.setColsNum(m.getColsNum());
+            item.setSavedAt(m.getSavedAt());
+            topList.add(item);
+        }
+
+        // 5. 查询当前用户的最佳记录
+        LeaderboardItem myRank = null;
+        if (currentUserId != null) {
+            LambdaQueryWrapper<Maze> myWrapper = new LambdaQueryWrapper<>();
+            myWrapper.eq(Maze::getUserId, currentUserId)
+                    .eq(Maze::getStatus, 2)
+                    .eq(Maze::getIsSaved, 1);
+            if (algorithm != null && !algorithm.trim().isEmpty()) {
+                myWrapper.eq(Maze::getAlgorithm, algorithm.trim());
+            }
+            if (rows != null) myWrapper.eq(Maze::getRowsNum, rows);
+            if (cols != null) myWrapper.eq(Maze::getColsNum, cols);
+            myWrapper.orderByAsc(Maze::getElapsedSeconds)
+                    .last("LIMIT 1");
+
+            Maze myBest = mazeMapper.selectOne(myWrapper);
+            if (myBest != null) {
+                // 计算当前用户在相同筛选条件下的排名
+                LambdaQueryWrapper<Maze> countWrapper = new LambdaQueryWrapper<>();
+                countWrapper.eq(Maze::getStatus, 2)
+                        .eq(Maze::getIsSaved, 1)
+                        .lt(Maze::getElapsedSeconds, myBest.getElapsedSeconds());
+                if (algorithm != null && !algorithm.trim().isEmpty()) {
+                    countWrapper.eq(Maze::getAlgorithm, algorithm.trim());
+                }
+                if (rows != null) countWrapper.eq(Maze::getRowsNum, rows);
+                if (cols != null) countWrapper.eq(Maze::getColsNum, cols);
+                long count = mazeMapper.selectCount(countWrapper);
+                myRank = new LeaderboardItem();
+                myRank.setRank((int) count + 1);
+                myRank.setUserId(currentUserId);
+                myRank.setUsername("我");  // 前端可替换为实际用户名
+                myRank.setMazeName(myBest.getMazeName());
+                myRank.setElapsedSeconds(myBest.getElapsedSeconds());
+                myRank.setAlgorithm(myBest.getAlgorithm());
+                myRank.setRowsNum(myBest.getRowsNum());
+                myRank.setColsNum(myBest.getColsNum());
+                myRank.setSavedAt(myBest.getSavedAt());
+            }
+        }
+
+        // 6. 组装返回体
+        LeaderboardResponse response = new LeaderboardResponse();
+        response.setTopList(topList);
+        response.setMyRank(myRank);
+        return response;
     }
 }

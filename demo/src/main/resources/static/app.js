@@ -6,7 +6,20 @@ const USERID_KEY = 'maze_userid';
 
 // ========== 工具函数 ==========
 function setUserId(id) { localStorage.setItem(USERID_KEY, id); }
-function getUserId() { return localStorage.getItem(USERID_KEY); }
+function getUserId() {
+    let id = localStorage.getItem(USERID_KEY);
+    if (!id) {
+        const token = getToken();
+        if (token) {
+            try {
+                const payload = JSON.parse(atob(token.split('.')[1]));
+                id = payload.userId;
+                if (id) setUserId(id);
+            } catch (e) {}
+        }
+    }
+    return id ? String(id) : null;
+}
 function removeUserId() { localStorage.removeItem(USERID_KEY); }
 function getToken() { return localStorage.getItem(TOKEN_KEY); }
 function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
@@ -43,7 +56,7 @@ const logoutBtn = document.getElementById('logout-btn');
 const navItems = document.querySelectorAll('.nav-item');
 const pages = document.querySelectorAll('.page');
 
-let isLoginMode = true;   // true=登录，false=注册
+let isLoginMode = true;
 
 // ========== 切换登录/注册 ==========
 function toggleMode() {
@@ -65,6 +78,11 @@ function toggleMode() {
 
 // ========== 页面状态切换 ==========
 function showLoginPage() {
+    if (ws) {
+        ws.close();
+        ws = null;
+        resetMultiUI();
+    }
     loginPage.style.display = 'flex';
     gameHall.style.display = 'none';
     removeToken();
@@ -75,38 +93,56 @@ function showGameHall(username) {
     gameHall.style.display = 'flex';
     displayUsername.textContent = username;
     heroUsername.textContent = username;
-    // 默认显示主页
     switchPage('home');
 }
 
-// 导航页切换
 function switchPage(pageName) {
-    // 更新导航激活状态
     navItems.forEach(item => {
         item.classList.remove('active');
         if (item.dataset.page === pageName) item.classList.add('active');
     });
-    // 显示对应页面
     pages.forEach(page => {
         page.classList.remove('active');
         if (page.id === `page-${pageName}`) page.classList.add('active');
     });
     if (pageName === 'maze') {
-        if (modeSelectDiv) modeSelectDiv.style.display = 'block';
-        if (singleSetupDiv) singleSetupDiv.style.display = 'none';
-        if (mazeGameContainer) mazeGameContainer.style.display = 'none';
-        if (mazeConfigPanel) mazeConfigPanel.style.display = 'block';
+        if (multiInRoom) {
+            modeSelectDiv.style.display = 'none';
+            singleSetupDiv.style.display = 'none';
+            if (mazeConfigPanel) mazeConfigPanel.style.display = 'none';
+            if (mazeGameContainer) mazeGameContainer.style.display = 'none';
+            if (savedMazesPanel) savedMazesPanel.style.display = 'none';
+            multiContainer.style.display = 'block';
+            if (multiStarted) {
+                waitingRoom.style.display = 'none';
+                multiGameContainer.style.display = 'block';
+            } else {
+                waitingRoom.style.display = 'block';
+                multiGameContainer.style.display = 'none';
+            }
+        } else {
+            modeSelectDiv.style.display = 'block';
+            singleSetupDiv.style.display = 'none';
+            if (mazeGameContainer) mazeGameContainer.style.display = 'none';
+            if (multiContainer) multiContainer.style.display = 'none';
+            if (mazeConfigPanel) mazeConfigPanel.style.display = 'block';
+            updateSavedPanelVisibility();
+        }
+    }
+    if (pageName === 'home') {
+        loadPendingRequests();   // 每次回到主页刷新信封未读数
+    }
+    if (pageName === 'leaderboard') {
+        loadLeaderboard();
     }
 }
 
-// 绑定导航点击事件
 navItems.forEach(item => {
     item.addEventListener('click', () => {
         switchPage(item.dataset.page);
     });
 });
 
-// 主页的快速开始按钮（跳转到迷宫页）
 document.getElementById('start-maze-btn').addEventListener('click', () => {
     switchPage('maze');
 });
@@ -133,7 +169,6 @@ authForm.addEventListener('submit', async (e) => {
         setToken(token);
         setUsername(username);
 
-        // 解析 JWT payload 获取 userId
         const payload = JSON.parse(atob(token.split('.')[1]));
         setUserId(payload.userId);
 
@@ -143,52 +178,52 @@ authForm.addEventListener('submit', async (e) => {
     }
 });
 
-// 登出
 logoutBtn.addEventListener('click', async () => {
     try {
         await request('/auth/logout', { method: 'POST' });
     } catch (e) {
         console.warn('登出异常：', e.message);
     } finally {
+        if (ws) {
+            ws.close();
+            ws = null;
+        }
+        resetMultiUI();
         removeToken();
         removeUsername();
         showLoginPage();
     }
 });
 
-// 注册/登录切换
 toggleLink.addEventListener('click', (e) => {
     e.preventDefault();
     toggleMode();
 });
+
 // ========== 模式选择逻辑 ==========
 const modeSelectDiv = document.getElementById('mode-select');
 const singleSetupDiv = document.getElementById('single-setup');
 
 // ====== 单人迷宫游戏逻辑 ======
-let currentMazeData = null;      // 当前迷宫实体
-let grid = [];                  // 二维网格 0=路 1=墙
+let currentMazeData = null;
+let grid = [];
 let playerPos = { row: 1, col: 0 };
 let cellSize = 20;
 let gamePaused = false;
 let gameWon = false;
-let moving = false;             // 移动锁，防止请求堆积
+let moving = false;
 
-// 单人计时变量
 let gameStartTime = null;
 let timerInterval = null;
 
-// DOM 元素
 const mazeConfigPanel = document.getElementById('maze-config-panel');
 const mazeGameContainer = document.getElementById('maze-game-container');
 const mazeCanvas = document.getElementById('maze-canvas');
 const ctx = mazeCanvas ? mazeCanvas.getContext('2d') : null;
 
-// 离屏背景 Canvas
 const bgCanvas = document.getElementById('maze-bg-canvas');
 const bgCtx = bgCanvas ? bgCanvas.getContext('2d') : null;
 
-// 计时器工具函数
 function formatTime(sec) {
     const m = String(Math.floor(sec / 60)).padStart(2, '0');
     const s = String(sec % 60).padStart(2, '0');
@@ -204,12 +239,14 @@ function updateTimerDisplay() {
         el.textContent = '00:00';
     }
 }
+
 function startTimer() {
     stopTimer();
     gameStartTime = Date.now();
     updateTimerDisplay();
     timerInterval = setInterval(updateTimerDisplay, 1000);
 }
+
 function stopTimer() {
     if (timerInterval) {
         clearInterval(timerInterval);
@@ -217,24 +254,26 @@ function stopTimer() {
     }
     updateTimerDisplay();
 }
+
 function pauseTimer() {
     if (timerInterval) {
         clearInterval(timerInterval);
         timerInterval = null;
     }
 }
+
 function resumeTimer() {
     if (!gameStartTime || timerInterval) return;
     updateTimerDisplay();
     timerInterval = setInterval(updateTimerDisplay, 1000);
 }
+
 function resetTimer() {
     stopTimer();
     gameStartTime = null;
     document.getElementById('timer-display').textContent = '00:00';
 }
 
-// 生成迷宫按钮
 document.getElementById('generate-maze-btn').addEventListener('click', async () => {
     const rows = parseInt(document.getElementById('maze-rows').value) || 21;
     const cols = parseInt(document.getElementById('maze-cols').value) || 21;
@@ -252,23 +291,18 @@ document.getElementById('generate-maze-btn').addEventListener('click', async () 
         gamePaused = false;
         document.getElementById('game-status').textContent = '探索中...';
 
-        // 切换到游戏画面
         mazeConfigPanel.style.display = 'none';
         mazeGameContainer.style.display = 'block';
 
-        // 调整尺寸并绘制静态背景
         resizeCanvas();
         drawStaticBackground();
-
-        // 绘制玩家初始位置
         if (ctx) drawPlayer();
-        startTimer();  // 开始计时
+        startTimer();
     } catch (e) {
         alert('生成迷宫失败：' + e.message);
     }
 });
 
-// 重写返回按钮逻辑（确保参数面板显示）
 document.getElementById('back-to-mode').addEventListener('click', () => {
     const doBack = () => {
         document.getElementById('single-setup').style.display = 'none';
@@ -280,7 +314,7 @@ document.getElementById('back-to-mode').addEventListener('click', () => {
         grid = [];
         gameWon = false;
         gamePaused = false;
-        resetTimer(); // 重置计时
+        resetTimer();
     };
 
     if (currentMazeData && currentMazeData.isSaved === 0 && mazeGameContainer.style.display !== 'none') {
@@ -290,7 +324,6 @@ document.getElementById('back-to-mode').addEventListener('click', () => {
     }
 });
 
-// 画布尺寸调整
 function resizeCanvas() {
     if (!grid.length) return;
     const rows = grid.length, cols = grid[0].length;
@@ -299,19 +332,15 @@ function resizeCanvas() {
     cellSize = Math.min(30, Math.floor(maxWidth / cols), Math.floor(maxHeight / rows));
     mazeCanvas.width = cols * cellSize;
     mazeCanvas.height = rows * cellSize;
-
-    // 背景 Canvas 同步尺寸
     bgCanvas.width = mazeCanvas.width;
     bgCanvas.height = mazeCanvas.height;
 }
 
-// 绘制静态背景（仅一次，保存到离屏 Canvas）
 function drawStaticBackground() {
     if (!bgCtx || !grid.length) return;
     const rows = grid.length, cols = grid[0].length;
     bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
 
-    // 绘制道路和墙壁
     for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
             const x = c * cellSize, y = r * cellSize;
@@ -325,7 +354,6 @@ function drawStaticBackground() {
         }
     }
 
-    // 起点
     const start = { row: currentMazeData.startRow, col: currentMazeData.startCol };
     bgCtx.fillStyle = '#2d5a27';
     bgCtx.fillRect(start.col * cellSize, start.row * cellSize, cellSize, cellSize);
@@ -333,14 +361,12 @@ function drawStaticBackground() {
     bgCtx.font = `${cellSize * 0.6}px sans-serif`;
     bgCtx.fillText('入', start.col * cellSize + cellSize*0.2, start.row * cellSize + cellSize*0.7);
 
-    // 终点
     const end = { row: currentMazeData.endRow, col: currentMazeData.endCol };
     bgCtx.fillStyle = '#5a2727';
     bgCtx.fillRect(end.col * cellSize, end.row * cellSize, cellSize, cellSize);
     bgCtx.fillStyle = '#c8aa6e';
     bgCtx.fillText('終', end.col * cellSize + cellSize*0.2, end.row * cellSize + cellSize*0.7);
 
-    // 道具（如果有）
     if (currentMazeData.itemPositions) {
         const items = JSON.parse(currentMazeData.itemPositions);
         items.forEach(item => {
@@ -352,7 +378,6 @@ function drawStaticBackground() {
     }
 }
 
-// 绘制玩家（只绘制动态元素）
 function drawPlayer() {
     if (!ctx) return;
     ctx.clearRect(0, 0, mazeCanvas.width, mazeCanvas.height);
@@ -385,7 +410,6 @@ function drawPlayer() {
     }
 }
 
-// 移动处理（带锁）
 async function movePlayer(direction) {
     if (moving || gamePaused || gameWon || !currentMazeData) return;
     moving = true;
@@ -400,7 +424,7 @@ async function movePlayer(direction) {
 
         if (gameWon) {
             document.getElementById('game-status').textContent = '🎉 恭喜通关！';
-            stopTimer(); // 停止计时
+            stopTimer();
             if (result.data.elapsedSeconds != null) {
                 document.getElementById('timer-display').textContent = formatTime(result.data.elapsedSeconds);
             }
@@ -413,7 +437,6 @@ async function movePlayer(direction) {
     }
 }
 
-// 键盘监听
 window.addEventListener('keydown', (e) => {
     if (!mazeGameContainer || mazeGameContainer.style.display === 'none') return;
     const key = e.key.toLowerCase();
@@ -432,7 +455,6 @@ window.addEventListener('keydown', (e) => {
     }
 });
 
-// 工具栏按钮
 document.getElementById('pause-game-btn').addEventListener('click', () => {
     gamePaused = !gamePaused;
     document.getElementById('pause-game-btn').textContent = gamePaused ? '继续' : '暂停';
@@ -465,13 +487,12 @@ document.getElementById('new-maze-btn').addEventListener('click', () => {
     };
 
     if (currentMazeData && currentMazeData.isSaved === 0) {
-        showExitConfirmation(doNewMaze, doNewMaze); // 保存后执行 或 直接执行
+        showExitConfirmation(doNewMaze, doNewMaze);
     } else {
         doNewMaze();
     }
 });
 
-// 窗口大小变化时重绘背景和玩家
 window.addEventListener('resize', () => {
     if (mazeGameContainer && mazeGameContainer.style.display === 'block' && currentMazeData) {
         resizeCanvas();
@@ -480,7 +501,6 @@ window.addEventListener('resize', () => {
     }
 });
 
-// 调整单人模式入口（确保参数面板显示）
 document.getElementById('single-mode-btn').addEventListener('click', () => {
     modeSelectDiv.style.display = 'none';
     singleSetupDiv.style.display = 'block';
@@ -488,25 +508,27 @@ document.getElementById('single-mode-btn').addEventListener('click', () => {
     mazeGameContainer.style.display = 'none';
     if (multiContainer) multiContainer.style.display = 'none';
 });
+
 // ====== 多人迷宫 WebSocket 逻辑 ======
 let ws = null;
 let multiRoomId = null;
-let multiUserIdStr = null;     // 当前用户的 userId（从 token 解析或登录后存储）
 let multiGrid = [];
 let multiEndRow = -1, multiEndCol = -1;
-let multiPlayersPos = {};      // userId -> { row, col }
+let multiPlayersPos = {};
 let multiReadySet = new Set();
 let multiHostId = null;
 let multiStarted = false;
 let multiWon = false;
 let multiMoving = false;
 let multiCellSize = 20;
+let multiInRoom = false;
+let multiUserIdStr = null;   // 当前 WebSocket 连接绑定的 userId（本标签页专用）
 
-// 多人计时变量
 let multiGameStartTime = null;
 let multiTimerInterval = null;
 
-// DOM
+let wsSendQueue = [];
+
 const multiContainer = document.getElementById('multi-container');
 const roomLobby = document.getElementById('room-lobby');
 const waitingRoom = document.getElementById('waiting-room');
@@ -516,7 +538,6 @@ const multiCtx = multiCanvas ? multiCanvas.getContext('2d') : null;
 const multiBgCanvas = document.getElementById('multi-bg-canvas');
 const multiBgCtx = multiBgCanvas ? multiBgCanvas.getContext('2d') : null;
 
-// 多人计时工具函数
 function updateMultiTimerDisplay() {
     const el = document.getElementById('multi-timer-display');
     if (el && multiGameStartTime) {
@@ -526,12 +547,14 @@ function updateMultiTimerDisplay() {
         el.textContent = '00:00';
     }
 }
+
 function startMultiTimer() {
     stopMultiTimer();
     multiGameStartTime = Date.now();
     updateMultiTimerDisplay();
     multiTimerInterval = setInterval(updateMultiTimerDisplay, 1000);
 }
+
 function stopMultiTimer() {
     if (multiTimerInterval) {
         clearInterval(multiTimerInterval);
@@ -539,23 +562,44 @@ function stopMultiTimer() {
     }
     updateMultiTimerDisplay();
 }
+
 function resetMultiTimer() {
     stopMultiTimer();
     multiGameStartTime = null;
     document.getElementById('multi-timer-display').textContent = '00:00';
 }
 
-// 连接 WebSocket
 function connectMultiWS() {
+    if (ws) {
+        ws.onclose = null;
+        ws.close();
+        ws = null;
+        resetMultiUI();
+        wsSendQueue = [];
+    }
     const token = getToken();
     ws = new WebSocket(`ws://${location.host}/ws/maze?token=` + token);
-    ws.onopen = () => console.log('多人WebSocket已连接');
+    ws.onopen = () => {
+        console.log('多人WebSocket已连接');
+        // 从当前连接使用的 token 中提取 userId，存入本标签页专用变量
+        try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            multiUserIdStr = String(payload.userId);
+        } catch (e) {
+            multiUserIdStr = null;
+        }
+        while (wsSendQueue.length > 0) {
+            const msg = wsSendQueue.shift();
+            ws.send(JSON.stringify(msg));
+        }
+    };
     ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
         handleWSMessage(msg);
     };
     ws.onclose = () => {
         console.log('多人WebSocket断开');
+        multiInRoom = false;
         resetMultiUI();
     };
     ws.onerror = (err) => console.error('WebSocket错误', err);
@@ -571,26 +615,40 @@ function handleWSMessage(msg) {
         case 'game_started': startMultiGame(data); break;
         case 'player_moved': updateMultiPosition(data.userId, data.row, data.col); break;
         case 'winner': showMultiWinner(data.userId, data.elapsedSeconds); break;
-        case 'kicked': alert(data.message || '你被踢出了房间'); resetMultiUI(); break;
-        case 'left': resetMultiUI(); break;
+        case 'kicked':
+            multiInRoom = false;
+            alert(data.message || '你被踢出了房间');
+            if (ws) { ws.close(); ws = null; }
+            resetMultiUI();
+            break;
+        case 'left':
+            multiInRoom = false;
+            if (ws) { ws.close(); ws = null; }
+            resetMultiUI();
+            break;
         case 'error': document.getElementById('room-message').textContent = data; break;
     }
 }
 
 function sendWS(type, data) {
+    const message = { type, data };
     if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type, data }));
+        ws.send(JSON.stringify(message));
+    } else {
+        wsSendQueue.push(message);
+        if (!ws || ws.readyState === WebSocket.CLOSED) {
+            connectMultiWS();
+        }
     }
 }
 
-// ---- 界面切换 ----
 document.getElementById('multi-mode-btn').addEventListener('click', () => {
     modeSelectDiv.style.display = 'none';
     multiContainer.style.display = 'block';
     roomLobby.style.display = 'block';
     waitingRoom.style.display = 'none';
     multiGameContainer.style.display = 'none';
-    if (!ws || ws.readyState !== WebSocket.OPEN) connectMultiWS();
+    // 连接将在 sendWS 中自动建立
 });
 
 document.getElementById('back-to-mode-multi').addEventListener('click', () => {
@@ -600,7 +658,6 @@ document.getElementById('back-to-mode-multi').addEventListener('click', () => {
     resetMultiUI();
 });
 
-// ---- 房间操作 ----
 document.getElementById('create-room-btn').addEventListener('click', () => {
     sendWS('create', { rows: 21, cols: 21, algorithm: 'dfs' });
 });
@@ -637,7 +694,6 @@ document.getElementById('kick-player-btn').addEventListener('click', () => {
     if (target) sendWS('kick', { roomId: multiRoomId, targetUserId: target });
 });
 
-// ---- 房间信息更新 ----
 function updateRoomInfo(data) {
     multiPlayersPos = data.positions || {};
     multiRoomId = data.roomId;
@@ -648,19 +704,25 @@ function updateRoomInfo(data) {
     multiStarted = data.started;
 
     document.getElementById('current-room-id').textContent = multiRoomId;
-    document.getElementById('room-host-badge').style.display = (multiHostId === getUserId()) ? 'inline' : 'none';
-    document.getElementById('start-game-btn').style.display = (multiHostId === getUserId()) ? 'inline-block' : 'none';
+    const uid = multiUserIdStr;
+    document.getElementById('room-host-badge').style.display = (uid && String(multiHostId) === uid) ? 'inline' : 'none';
+    if (!uid) {
+        document.getElementById('start-game-btn').style.display = 'none';
+        return;
+    }
+    document.getElementById('start-game-btn').style.display =
+        (String(multiHostId) === uid) ? 'inline-block' : 'none';
 
     roomLobby.style.display = 'none';
     waitingRoom.style.display = 'block';
 
-    // 清空并重建玩家列表
-    document.getElementById('kick-target-select').innerHTML = ''; // 清空旧选项
+    document.getElementById('kick-target-select').innerHTML = '';
     document.getElementById('player-list').innerHTML = '';
     if (data.players) data.players.forEach(p => addPlayerToList(p));
     if (data.readyPlayers) data.readyPlayers.forEach(p => multiReadySet.add(p));
 
     updateReadyUI();
+    multiInRoom = true;
 }
 
 function addPlayerToList(userId) {
@@ -674,8 +736,8 @@ function addPlayerToList(userId) {
                      <span class="ready-tag">${multiReadySet.has(userId) ? '✅已准备' : '⏳未准备'}</span>`;
     list.appendChild(div);
     document.getElementById('room-player-count').textContent = `${list.children.length}/4 人`;
-    // 如果自己是房主，显示踢人下拉
-    if (getUserId() === multiHostId && userId !== getUserId()) {
+    const uid = multiUserIdStr;
+    if (uid && String(multiHostId) === uid && userId !== uid) {
         document.getElementById('kick-player-btn').style.display = 'inline-block';
         document.getElementById('kick-target-select').style.display = 'inline-block';
         const opt = document.createElement('option');
@@ -691,8 +753,9 @@ function removePlayerFromList(userId, newHost) {
     document.getElementById('room-player-count').textContent = `${list.children.length}/4 人`;
     if (newHost) {
         multiHostId = newHost;
-        document.getElementById('room-host-badge').style.display = (multiHostId === getUserId()) ? 'inline' : 'none';
-        document.getElementById('start-game-btn').style.display = (multiHostId === getUserId()) ? 'inline-block' : 'none';
+        const uid = multiUserIdStr;
+        document.getElementById('room-host-badge').style.display = (uid && String(multiHostId) === uid) ? 'inline' : 'none';
+        document.getElementById('start-game-btn').style.display = (uid && String(multiHostId) === uid) ? 'inline-block' : 'none';
     }
 }
 
@@ -705,16 +768,14 @@ function updateReadyStatus(userId, ready) {
 }
 
 function updateReadyUI() {
-    document.getElementById('start-game-btn').disabled = !(multiReadySet.size >= 2); // 至少2人准备
+    document.getElementById('start-game-btn').disabled = !(multiReadySet.size >= 2);
 }
 
-// ---- 游戏开始/进行 ----
 function startMultiGame(data) {
     waitingRoom.style.display = 'none';
     multiGameContainer.style.display = 'block';
     multiStarted = true;
 
-    // 更新迷宫数据（第二局已不同）
     if (data.grid) multiGrid = data.grid;
     if (data.endRow !== undefined) multiEndRow = data.endRow;
     if (data.endCol !== undefined) multiEndCol = data.endCol;
@@ -723,7 +784,7 @@ function startMultiGame(data) {
     document.getElementById('multi-game-status').textContent = '竞速中...';
     initMultiCanvas();
     drawMultiMaze();
-    startMultiTimer();  // 开始多人计时
+    startMultiTimer();
 }
 
 function initMultiCanvas() {
@@ -749,7 +810,6 @@ function drawStaticMultiBg() {
         }
     }
 
-    // ✅ 起点（所有玩家起点固定为 row=1, col=0）
     const startRow = 1, startCol = 0;
     multiBgCtx.fillStyle = '#2d5a27';
     multiBgCtx.fillRect(startCol * multiCellSize, startRow * multiCellSize, multiCellSize, multiCellSize);
@@ -757,7 +817,6 @@ function drawStaticMultiBg() {
     multiBgCtx.font = `${multiCellSize*0.6}px sans-serif`;
     multiBgCtx.fillText('入', startCol * multiCellSize + multiCellSize*0.2, startRow * multiCellSize + multiCellSize*0.7);
 
-    // 终点
     multiBgCtx.fillStyle = '#5a2727';
     multiBgCtx.fillRect(multiEndCol * multiCellSize, multiEndRow * multiCellSize, multiCellSize, multiCellSize);
     multiBgCtx.fillStyle = '#c8aa6e';
@@ -769,11 +828,10 @@ function drawMultiMaze() {
     if (!multiCtx || !multiBgCanvas) return;
     multiCtx.clearRect(0, 0, multiCanvas.width, multiCanvas.height);
     multiCtx.drawImage(multiBgCanvas, 0, 0);
-    // 绘制所有玩家
     const colors = ['#e94560', '#4fc3f7', '#ffb74d', '#81c784'];
     let idx = 0;
     for (const [uid, pos] of Object.entries(multiPlayersPos)) {
-        multiCtx.fillStyle = uid === getUserId() ? '#ffd700' : colors[idx % colors.length];
+        multiCtx.fillStyle = uid === multiUserIdStr ? '#ffd700' : colors[idx % colors.length];
         multiCtx.beginPath();
         multiCtx.arc(pos.col * multiCellSize + multiCellSize/2, pos.row * multiCellSize + multiCellSize/2, multiCellSize*0.35, 0, Math.PI*2);
         multiCtx.fill();
@@ -797,23 +855,18 @@ function showMultiWinner(userId, elapsedSeconds) {
     alert(`${userId} 率先到达终点！用时 ${timeStr}`);
     drawMultiMaze();
 
-    // 自动返回房间等待室
     setTimeout(() => {
         multiGameContainer.style.display = 'none';
         waitingRoom.style.display = 'block';
-
         multiStarted = false;
         multiWon = false;
         resetMultiTimer();
-
-        // 清除所有准备状态
         multiReadySet.clear();
         document.querySelectorAll('#player-list .ready-tag').forEach(tag => {
             tag.textContent = '⏳未准备';
         });
-
-        // 房主显示开始游戏按钮（需重新准备后启用）
-        if (multiHostId === getUserId()) {
+        const uid = multiUserIdStr;
+        if (uid && String(multiHostId) === uid) {
             document.getElementById('start-game-btn').style.display = 'inline-block';
             document.getElementById('start-game-btn').disabled = true;
         }
@@ -822,16 +875,13 @@ function showMultiWinner(userId, elapsedSeconds) {
     }, 1500);
 }
 
-// ---- 移动 ----
 async function multiMovePlayer(direction) {
     if (multiMoving || multiWon || !multiStarted) return;
     multiMoving = true;
     sendWS('move', { roomId: multiRoomId, direction });
-    // 本地也乐观更新（可选，这里等服务器广播后再更新）
     multiMoving = false;
 }
 
-// ---- 重置 ----
 function resetMultiUI() {
     roomLobby.style.display = 'block';
     waitingRoom.style.display = 'none';
@@ -842,13 +892,13 @@ function resetMultiUI() {
     multiReadySet.clear();
     multiStarted = false;
     multiWon = false;
-    resetMultiTimer();  // 重置多人计时
+    resetMultiTimer();
     document.getElementById('room-id-input').value = '';
     document.getElementById('room-message').textContent = '';
     document.getElementById('kick-target-select').innerHTML = '';
+    multiInRoom = false;
 }
 
-// 多人模式键盘监听
 window.addEventListener('keydown', (e) => {
     if (!multiGameContainer || multiGameContainer.style.display === 'none') return;
     const key = e.key.toLowerCase();
@@ -858,7 +908,6 @@ window.addEventListener('keydown', (e) => {
     else if (key === 'd' || key === 'arrowright') { e.preventDefault(); multiMovePlayer('right'); }
 });
 
-// 多人工具栏（只保留退出房间按钮）
 document.getElementById('multi-leave-game-btn').addEventListener('click', () => {
     sendWS('leave', { roomId: multiRoomId });
     resetMultiUI();
@@ -867,28 +916,16 @@ document.getElementById('multi-leave-game-btn').addEventListener('click', () => 
     multiGameContainer.style.display = 'none';
 });
 
-// 确保进入多人模式时显示正确
-// 修改 switchPage 函数，添加多人容器隐藏逻辑
-const origSwitchPage = switchPage;  // 只保留这一次声明
-switchPage = function(pageName) {
-    origSwitchPage(pageName);
-    if (pageName === 'maze') {
-        if (multiContainer) multiContainer.style.display = 'none';
-        updateSavedPanelVisibility();   // ← 加入这行
-    }
-};
 // ========== 我的存档按钮 ==========
 document.getElementById('view-saves-btn').addEventListener('click', () => {
     const panel = document.getElementById('saved-mazes-panel');
-    // 强制显示存档面板
     panel.style.display = 'block';
-    // 重新加载存档列表
     loadSavedMazesList();
-    // 平滑滚动到存档区域（300ms 防抖，避免按钮在动画期间触发多次）
     setTimeout(() => {
         panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 100);
 });
+
 // ========== 初始化 ==========
 function init() {
     const token = getToken();
@@ -900,6 +937,7 @@ function init() {
     }
 }
 init();
+
 // ========== 存档相关 DOM 元素 ==========
 const saveGameBtn = document.getElementById('save-game-btn');
 const saveModal = document.getElementById('save-modal');
@@ -920,7 +958,6 @@ const savedMazesList = document.getElementById('saved-mazes-list');
 
 let pendingLoadId = null;
 
-// ========== 保存按钮 ==========
 saveGameBtn.addEventListener('click', () => {
     if (!currentMazeData) {
         alert('没有正在进行的迷宫，无法保存');
@@ -947,8 +984,8 @@ confirmSaveBtn.addEventListener('click', async () => {
             body: JSON.stringify({ mazeName })
         });
         if (currentMazeData) {
-                    currentMazeData.isSaved = 1;
-                    currentMazeData.mazeName = mazeName; // 可选
+            currentMazeData.isSaved = 1;
+            currentMazeData.mazeName = mazeName;
         }
         saveModal.style.display = 'none';
         alert('迷宫保存成功！');
@@ -958,10 +995,9 @@ confirmSaveBtn.addEventListener('click', async () => {
     }
 });
 
-// ========== 存档列表 ==========
 async function loadSavedMazesList() {
     try {
-        const result = await request('/maze/saved');   // ✅ 正确接口
+        const result = await request('/maze/saved');
         const saves = result.data;
         savedMazesList.innerHTML = saves.length ? '' : '<p style="color:#9b9b9b;">暂无存档</p>';
         saves.forEach(save => {
@@ -1011,13 +1047,12 @@ async function loadMazeById(saveId) {
         resizeCanvas();
         drawStaticBackground();
         drawPlayer();
-        startTimer();  // 开始计时
+        startTimer();
     } catch (e) {
         alert('加载迷宫失败：' + e.message);
     }
 }
 
-// ========== 冲突模态框 ==========
 conflictSaveLoadBtn.addEventListener('click', async () => {
     conflictNameGroup.style.display = 'block';
     const mazeName = conflictSaveNameInput.value.trim();
@@ -1037,7 +1072,7 @@ conflictSaveLoadBtn.addEventListener('click', async () => {
         alert('操作失败：' + e.message);
     }
 });
-// ========== 退出迷宫确认相关 ==========
+
 const exitModal = document.getElementById('exit-maze-modal');
 const exitSaveBtn = document.getElementById('exit-save-btn');
 const exitDiscardBtn = document.getElementById('exit-discard-btn');
@@ -1047,7 +1082,6 @@ const exitModalError = document.getElementById('exit-modal-error');
 let pendingExitAction = null;
 
 function showExitConfirmation(onSaveAndExit, onDiscard) {
-    // 如果没有迷宫或已经保存，直接执行丢弃操作（无需弹窗）
     if (!currentMazeData || currentMazeData.isSaved === 1) {
         if (onDiscard) onDiscard();
         return;
@@ -1078,10 +1112,10 @@ exitSaveBtn.addEventListener('click', async () => {
             currentMazeData.isSaved = 1;
             currentMazeData.mazeName = name;
         }
-        const action = pendingExitAction;   // ← 保存
-        hideExitModal();                    // ← 隐藏
-        if (action && action.onSaveAndExit) {   // ✅ 改用 action
-                    action.onSaveAndExit();
+        const action = pendingExitAction;
+        hideExitModal();
+        if (action && action.onSaveAndExit) {
+            action.onSaveAndExit();
         }
     } catch (e) {
         exitModalError.textContent = e.message;
@@ -1089,14 +1123,15 @@ exitSaveBtn.addEventListener('click', async () => {
 });
 
 exitDiscardBtn.addEventListener('click', () => {
-    const action = pendingExitAction;   // ← 先保存
-    hideExitModal();                    // ← 再隐藏（会清空 pendingExitAction）
+    const action = pendingExitAction;
+    hideExitModal();
     if (action && action.onDiscard) {
         action.onDiscard();
     }
 });
 
 exitCancelBtn.addEventListener('click', hideExitModal);
+
 conflictDiscardLoadBtn.addEventListener('click', async () => {
     loadConflictModal.style.display = 'none';
     await loadMazeById(pendingLoadId);
@@ -1108,7 +1143,6 @@ conflictCancelBtn.addEventListener('click', () => {
     pendingLoadId = null;
 });
 
-// ========== 存档面板显示/隐藏 ==========
 function updateSavedPanelVisibility() {
     const show = (singleSetupDiv.style.display !== 'none' && mazeGameContainer.style.display === 'none');
     if (show) {
@@ -1119,13 +1153,11 @@ function updateSavedPanelVisibility() {
     }
 }
 
-// 监听游戏容器显示状态变化
 const observer = new MutationObserver(() => {
     updateSavedPanelVisibility();
 });
 observer.observe(mazeGameContainer, { attributes: true, attributeFilter: ['style'] });
 
-// 浏览器关闭/刷新前提醒（仅当迷宫未保存）
 window.addEventListener('beforeunload', (e) => {
     if (currentMazeData && currentMazeData.isSaved === 0) {
         e.preventDefault();
@@ -1133,3 +1165,339 @@ window.addEventListener('beforeunload', (e) => {
         return e.returnValue;
     }
 });
+
+// ========== 排行榜相关函数 ==========
+async function loadLeaderboard() {
+    document.getElementById('single-filters').style.display = 'flex';
+    document.getElementById('single-table-wrapper').style.display = 'block';
+    document.getElementById('multi-table-wrapper').style.display = 'none';
+    document.getElementById('my-rank-card').style.display = 'block';
+    document.getElementById('multi-my-rank-card').style.display = 'none';
+
+    const algo = document.getElementById('lb-algorithm').value;
+    const rows = document.getElementById('lb-rows').value;
+    const cols = document.getElementById('lb-cols').value;
+    const url = `/maze/leaderboard?algorithm=${algo}&rows=${rows}&cols=${cols}`;
+
+    try {
+        const result = await request(url);
+        const { topList, myRank } = result.data;
+
+        const tbody = document.getElementById('leaderboard-tbody');
+        tbody.innerHTML = '';
+        if (!topList || topList.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="no-data">暂无排行记录</td></tr>';
+        } else {
+            topList.forEach(item => {
+                const tr = document.createElement('tr');
+                let rankClass = '';
+                if (item.rank === 1) rankClass = 'rank-gold';
+                else if (item.rank === 2) rankClass = 'rank-silver';
+                else if (item.rank === 3) rankClass = 'rank-bronze';
+
+                tr.innerHTML = `
+                    <td class="${rankClass}">${item.rank}</td>
+                    <td>${item.userId}</td>
+                    <td>${item.username}</td>
+                    <td>${item.mazeName || '-'}</td>
+                    <td>${formatTime(item.elapsedSeconds)}</td>
+                    <td>${item.rowsNum}×${item.colsNum}</td>
+                    <td>${item.algorithm}</td>
+                    <td>${item.savedAt ? new Date(item.savedAt).toLocaleDateString() : '-'}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        const myCard = document.getElementById('my-rank-card');
+        const myDetail = document.getElementById('my-rank-detail');
+        if (myRank) {
+            myCard.style.display = 'block';
+            myDetail.innerHTML = `
+                <p>排名：<span>${myRank.rank}</span></p>
+                <p>用户ID：<span>${myRank.userId}</span></p>
+                <p>迷宫名称：<span>${myRank.mazeName || '-'}</span></p>
+                <p>用时：<span>${formatTime(myRank.elapsedSeconds)}</span></p>
+                <p>尺寸：<span>${myRank.rowsNum}×${myRank.colsNum}</span></p>
+                <p>算法：<span>${myRank.algorithm}</span></p>
+                <p>通关日期：<span>${myRank.savedAt ? new Date(myRank.savedAt).toLocaleDateString() : '-'}</span></p>
+            `;
+        } else {
+            myCard.style.display = 'block';
+            myDetail.innerHTML = '<p>你还没有通关记录，快去挑战吧！</p>';
+        }
+    } catch (e) {
+        console.error('加载排行榜失败:', e);
+        document.getElementById('leaderboard-tbody').innerHTML = '<tr><td colspan="8" class="no-data">排行榜加载失败</td></tr>';
+    }
+}
+
+async function loadMultiLeaderboard() {
+    document.getElementById('single-filters').style.display = 'none';
+    document.getElementById('single-table-wrapper').style.display = 'none';
+    document.getElementById('multi-table-wrapper').style.display = 'block';
+    document.getElementById('my-rank-card').style.display = 'none';
+    document.getElementById('multi-my-rank-card').style.display = 'block';
+
+    try {
+        const result = await request('/maze/multi-leaderboard');
+        const { topList, myRank } = result.data;
+
+        const tbody = document.getElementById('multi-leaderboard-tbody');
+        tbody.innerHTML = '';
+        if (!topList || topList.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="no-data">暂无多人排行记录</td></tr>';
+        } else {
+            topList.forEach(item => {
+                const tr = document.createElement('tr');
+                let rankClass = '';
+                if (item.rank === 1) rankClass = 'rank-gold';
+                else if (item.rank === 2) rankClass = 'rank-silver';
+                else if (item.rank === 3) rankClass = 'rank-bronze';
+                tr.innerHTML = `
+                    <td class="${rankClass}">${item.rank}</td>
+                    <td>${item.userId}</td>
+                    <td>${item.username}</td>
+                    <td>${item.wins}</td>
+                    <td>${item.fastestTime ? formatTime(item.fastestTime) : '-'}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        const myCard = document.getElementById('multi-my-rank-card');
+        const myDetail = document.getElementById('multi-my-rank-detail');
+        if (myRank) {
+            myCard.style.display = 'block';
+            myDetail.innerHTML = `
+                <p>排名：<span>${myRank.rank}</span></p>
+                <p>用户ID：<span>${myRank.userId}</span></p>
+                <p>获胜次数：<span>${myRank.wins}</span></p>
+                <p>最快用时：<span>${myRank.fastestTime ? formatTime(myRank.fastestTime) : '-'}</span></p>
+            `;
+        } else {
+            myCard.style.display = 'block';
+            myDetail.innerHTML = '<p>你还没有多人获胜记录，快去对战吧！</p>';
+        }
+    } catch (e) {
+        console.error('加载多人排行榜失败:', e);
+        document.getElementById('multi-leaderboard-tbody').innerHTML = '<tr><td colspan="5" class="no-data">排行榜加载失败</td></tr>';
+    }
+}
+
+document.getElementById('tab-single').addEventListener('click', () => {
+    document.getElementById('tab-single').classList.add('active');
+    document.getElementById('tab-multi').classList.remove('active');
+    loadLeaderboard();
+});
+
+document.getElementById('tab-multi').addEventListener('click', () => {
+    document.getElementById('tab-multi').classList.add('active');
+    document.getElementById('tab-single').classList.remove('active');
+    loadMultiLeaderboard();
+});
+
+document.getElementById('lb-query-btn').addEventListener('click', loadLeaderboard);
+// ========== 玩家实时搜索 ==========
+const playerSearchInput = document.getElementById('player-search-input');
+const searchResultsDiv = document.getElementById('search-results');
+const searchClearBtn = document.getElementById('search-clear');
+let searchDebounceTimer;
+
+// 输入事件（防抖 300ms）
+playerSearchInput.addEventListener('input', () => {
+    clearTimeout(searchDebounceTimer);
+    const keyword = playerSearchInput.value.trim();
+    if (keyword.length === 0) {
+        searchResultsDiv.style.display = 'none';
+        if (searchClearBtn) searchClearBtn.style.display = 'none';
+        return;
+    }
+    // 显示清除按钮（如果有）
+    if (searchClearBtn) searchClearBtn.style.display = 'block';
+    // 防抖请求
+    searchDebounceTimer = setTimeout(() => {
+        performSearch(keyword);
+    }, 300);
+});
+
+// 清除按钮（如果有）
+if (searchClearBtn) {
+    searchClearBtn.addEventListener('click', () => {
+        playerSearchInput.value = '';
+        searchResultsDiv.style.display = 'none';
+        searchClearBtn.style.display = 'none';
+        clearTimeout(searchDebounceTimer);
+    });
+}
+
+async function performSearch(keyword) {
+    try {
+        const result = await request(`/user/search?keyword=${encodeURIComponent(keyword)}`);
+        const users = result.data;
+        renderSearchResults(users);
+    } catch (e) {
+        console.error('搜索失败:', e);
+        searchResultsDiv.innerHTML = '<div class="no-data">搜索失败</div>';
+        searchResultsDiv.style.display = 'block';
+    }
+}
+
+function renderSearchResults(users) {
+    if (!users || users.length === 0) {
+        searchResultsDiv.innerHTML = '<div class="no-data">未找到匹配的玩家</div>';
+    } else {
+        searchResultsDiv.innerHTML = users.map(user => `
+            <div class="player-result-item">
+                <div class="player-info" style="flex:1;">
+                    <div class="player-name">${user.username}</div>
+                    <div class="player-stats">ID: ${user.userId}</div>
+                </div>
+                ${user.friendStatus === 'FRIEND'
+                    ? `<button class="action-btn small add-friend-inline" disabled>已添加</button>`
+                    : (user.friendStatus === 'PENDING'
+                        ? `<button class="action-btn small add-friend-inline" disabled>等待验证</button>`
+                        : `<button class="action-btn small add-friend-inline" onclick="addFriend('${user.userId}', '${user.username}')">+好友</button>`)
+                }
+            </div>
+        `).join('');
+    }
+    searchResultsDiv.style.display = 'block';
+}
+
+async function addFriend(userId, username) {
+    try {
+        await request('/friend/request', {
+            method: 'POST',
+            body: JSON.stringify({ targetUserId: Number(userId) })
+        });
+        alert(`已向 ${username} 发送好友申请`);
+        // 刷新搜索状态
+        performSearch(document.getElementById('player-search-input').value.trim());
+    } catch (e) {
+        alert('发送失败：' + e.message);
+    }
+}
+
+// ========== 好友列表 ==========
+async function renderFriendsList() {
+    const container = document.getElementById('friends-list');
+    try {
+        const result = await request('/friend/list');
+        const friends = result.data;
+        if (!friends || friends.length === 0) {
+            container.innerHTML = '<div class="no-friends">暂无好友，快去添加吧~</div>';
+            return;
+        }
+        container.innerHTML = friends.map(f => `
+            <div class="friend-item">
+                <div class="friend-avatar">👤</div>
+                <div class="friend-info">
+                    <div class="friend-name">${f.username}</div>
+                    <div class="friend-status">
+                        <span class="status-dot ${f.online ? 'online' : 'offline'}"></span>
+                        ${f.online ? '在线' : '离线'}
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    } catch (e) {
+        console.error('获取好友列表失败', e);
+        container.innerHTML = '<div class="no-friends">加载失败，请稍后重试</div>';
+    }
+}
+renderFriendsList();
+loadPendingRequests();
+initEnvelope();
+
+// ========== 好友申请（信封收件箱） ==========
+let requestsExpanded = false;   // 列表是否展开
+let pendingCount = 0;           // 未读申请数量
+
+async function loadPendingRequests() {
+    try {
+        const result = await request('/friend/requests');
+        const requests = result.data;
+        pendingCount = requests ? requests.length : 0;
+
+        // 更新徽章
+        const badge = document.getElementById('envelope-badge');
+        if (pendingCount > 0) {
+            badge.textContent = pendingCount;
+            badge.style.display = 'inline-block';
+        } else {
+            badge.style.display = 'none';
+        }
+
+        // 如果列表当前是展开状态，重新渲染内容
+        if (requestsExpanded) {
+            renderRequestsList(requests);
+        }
+    } catch (e) {
+        console.error('获取申请列表失败', e);
+    }
+}
+
+function renderRequestsList(requests) {
+    const container = document.getElementById('friend-requests-list');
+    if (!requests || requests.length === 0) {
+        container.innerHTML = '<div class="no-data" style="padding:10px;">暂无待处理申请</div>';
+        return;
+    }
+    container.innerHTML = requests.map(req => `
+        <div class="friend-request-item">
+            <span class="req-username">${req.username} (ID: ${req.userId})</span>
+            <div class="req-actions">
+                <button class="action-btn small" onclick="handleAccept(${req.userId}, '${req.username}')">同意</button>
+                <button class="action-btn small secondary" onclick="handleReject(${req.userId})">拒绝</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function toggleRequests() {
+    const list = document.getElementById('friend-requests-list');
+    requestsExpanded = !requestsExpanded;
+    if (requestsExpanded) {
+        list.style.display = 'block';
+        // 展开时重新渲染最新数据
+        loadPendingRequests();
+    } else {
+        list.style.display = 'none';
+    }
+}
+
+async function handleAccept(requestUserId, username) {
+    try {
+        await request('/friend/accept', {
+            method: 'POST',
+            body: JSON.stringify({ requestUserId: Number(requestUserId) })
+        });
+        alert(`已添加 ${username} 为好友`);
+        // 刷新申请列表和好友列表
+        loadPendingRequests();
+        renderFriendsList();
+    } catch (e) {
+        alert('操作失败：' + e.message);
+    }
+}
+
+async function handleReject(requestUserId) {
+    try {
+        await request('/friend/reject', {
+            method: 'POST',
+            body: JSON.stringify({ requestUserId: Number(requestUserId) })
+        });
+        loadPendingRequests();
+    } catch (e) {
+        alert('操作失败：' + e.message);
+    }
+}
+
+// 绑定信封点击事件（放在初始化中执行，确保DOM已存在）
+function initEnvelope() {
+    const header = document.getElementById('envelope-header');
+    if (header) {
+        header.addEventListener('click', toggleRequests);
+    }
+}

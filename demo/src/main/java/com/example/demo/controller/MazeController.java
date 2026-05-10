@@ -1,11 +1,9 @@
 package com.example.demo.controller;
 
-import com.example.demo.dto.LoadMazeRequest;
-import com.example.demo.dto.MazeGenerateRequest;
-import com.example.demo.dto.MoveRequest;
-import com.example.demo.dto.SaveMazeRequest;
+import com.example.demo.dto.*;
 import com.example.demo.entity.Maze;
 import com.example.demo.service.MazeService;
+import com.example.demo.service.MultiGameService;
 import com.example.demo.utils.Result;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +18,7 @@ import java.util.Map;
 public class MazeController {
 
     private final MazeService mazeService;
+    private final MultiGameService multiGameService;
 
     @PostMapping("/generate")
     public Result<Maze> generate(HttpServletRequest request, @RequestBody MazeGenerateRequest genReq) {
@@ -68,5 +67,21 @@ public class MazeController {
         Long userId = (Long) request.getAttribute("userId");
         mazeService.deleteSavedMaze(userId, id);
         return Result.success();
+    }
+
+    @GetMapping("/leaderboard")
+    public Result<LeaderboardResponse> getLeaderboard(
+            HttpServletRequest request,
+            @RequestParam(required = false) String algorithm,
+            @RequestParam(required = false) Integer rows,
+            @RequestParam(required = false) Integer cols) {
+        Long userId = (Long) request.getAttribute("userId");
+        return Result.success(mazeService.getLeaderboard(userId, algorithm, rows, cols));
+    }
+
+    @GetMapping("/multi-leaderboard")
+    public Result<MultiLeaderboardResponse> multiLeaderboard(HttpServletRequest request) {
+        Long userId = (Long) request.getAttribute("userId");
+        return Result.success(multiGameService.getMultiLeaderboard(userId));
     }
 }

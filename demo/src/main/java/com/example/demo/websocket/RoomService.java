@@ -35,14 +35,30 @@ public class RoomService {
     }
 
     public GameRoom joinRoom(String roomId, String userId) {
-        // 检查是否已在其他房间
+        // 清理用户在其他房间的残留，保留目标房间
         for (Map.Entry<String, GameRoom> entry : rooms.entrySet()) {
-            if (entry.getValue().getPlayers().contains(userId)) {
-                throw new RuntimeException("你已经在一个房间中，请先退出当前房间");
+            if (entry.getKey().equals(roomId)) continue; // 跳过目标房间
+            GameRoom r = entry.getValue();
+            if (r.getPlayers().contains(userId)) {
+                r.getPlayers().remove(userId);
+                r.getPositions().remove(userId);
+                r.getReadyPlayers().remove(userId);
+                if (r.getPlayers().isEmpty()) {
+                    rooms.remove(entry.getKey());
+                }
             }
         }
+
         GameRoom room = rooms.get(roomId);
-        if (room == null || room.isStarted()) throw new RuntimeException("房间不存在或已开始");
+        if (room == null || room.isStarted()) {
+            throw new RuntimeException("房间不存在或已开始");
+        }
+
+        // 如果用户已经在目标房间（例如断线重连），直接返回
+        if (room.getPlayers().contains(userId)) {
+            return room;
+        }
+
         room.getPlayers().add(userId);
         room.getPositions().put(userId, new int[]{1, 0});
         return room;

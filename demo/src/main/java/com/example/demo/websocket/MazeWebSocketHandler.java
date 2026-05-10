@@ -1,5 +1,7 @@
 package com.example.demo.websocket;
 
+import com.example.demo.mapper.OnlineUserMapper;
+import com.example.demo.service.MultiGameService;
 import com.example.demo.utils.JwtUtil;
 import org.json.JSONObject;
 import org.springframework.stereotype.Component;
@@ -7,6 +9,8 @@ import org.springframework.web.socket.*;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -18,13 +22,21 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
 
     private final JwtUtil jwtUtil;
     private final RoomService roomService;
+    private final MultiGameService multiGameService;
+    private final OnlineUserMapper onlineUserMapper;
 
-    // userId -> WebSocketSession
-    private static final ConcurrentHashMap<String, WebSocketSession> userSessions = new ConcurrentHashMap<>();
+    // userId -> 该用户的所有活跃连接（支持同一账号多窗口）
+    private static final ConcurrentHashMap<String, Set<WebSocketSession>> userSessions = new ConcurrentHashMap<>();
+    // 连接计数器，userId -> 连接数
+    private static final ConcurrentHashMap<String, Integer> connectionCount = new ConcurrentHashMap<>();
 
-    public MazeWebSocketHandler(JwtUtil jwtUtil, RoomService roomService) {
+    public MazeWebSocketHandler(JwtUtil jwtUtil, RoomService roomService,
+                                MultiGameService multiGameService,
+                                OnlineUserMapper onlineUserMapper) {
         this.jwtUtil = jwtUtil;
         this.roomService = roomService;
+        this.multiGameService = multiGameService;
+        this.onlineUserMapper = onlineUserMapper;
     }
 
     /**
@@ -46,9 +58,19 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
         }
         Long userId = jwtUtil.getUserIdFromToken(token);
         String userIdStr = userId.toString();
-        userSessions.put(userIdStr, session);
+        //获取 userId 和 userIdStr 后：
+        String username = jwtUtil.getUsernameFromToken(token);  // 从 token 中获取用户名
+        session.getAttributes().put("username", username);
+        // 更新连接计数
+        int count = connectionCount.merge(userIdStr, 1, Integer::sum);
+        if (count == 1) {
+            // 第一次上线，写入 online_users 表
+            onlineUserMapper.upsertOnline(userId, username);
+        }
+        // 将新连接加入该用户的连接集合
+        userSessions.computeIfAbsent(userIdStr, k -> ConcurrentHashMap.newKeySet()).add(session);
         session.getAttributes().put("userId", userIdStr);
-        System.out.println("用户 " + userIdStr + " 上线，当前在线：" + userSessions.size());
+        System.out.println("用户 " + userIdStr + " 上线，当前在线用户数：" + userSessions.size());
     }
 
     @Override
@@ -97,7 +119,21 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
         String userId = (String) session.getAttributes().get("userId");
         if (userId != null) {
-            userSessions.remove(userId);
+            // 从该用户的连接集合中移除当前 session
+            Set<WebSocketSession> sessions = userSessions.get(userId);
+            if (sessions != null) {
+                sessions.remove(session);
+                if (sessions.isEmpty()) {
+                    userSessions.remove(userId);
+                }
+            }
+            // 更新连接计数
+            int count = connectionCount.compute(userId, (k, v) -> (v == null || v <= 1) ? null : v - 1);
+            if (count == 0) {
+                // 所有连接都断开，从 online_users 表中删除
+                onlineUserMapper.deleteById(Long.parseLong(userId));
+            }
+
             String roomId = (String) session.getAttributes().get("roomId");
             if (roomId != null) {
                 try {
@@ -112,7 +148,7 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
                     broadcastToRoom(roomId, "player_left", leaveData);
                 } catch (Exception ignored) {}
             }
-            System.out.println("用户 " + userId + " 下线，当前在线：" + userSessions.size());
+            System.out.println("用户 " + userId + " 下线，当前在线用户数：" + userSessions.size());
         }
     }
 
@@ -132,9 +168,14 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
         GameRoom room = roomService.getRoom(roomId);
         if (room == null) return;
         for (String uid : room.getPlayers()) {
-            WebSocketSession s = userSessions.get(uid);
-            if (s != null && s.isOpen()) {
-                sendMessage(s, type, data);
+            // 向该用户的所有连接发送消息
+            Set<WebSocketSession> sessions = userSessions.get(uid);
+            if (sessions != null) {
+                for (WebSocketSession s : sessions) {
+                    if (s.isOpen()) {
+                        sendMessage(s, type, data);
+                    }
+                }
             }
         }
     }
@@ -196,6 +237,11 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
         if (won) {
             long elapsed = (System.currentTimeMillis() - room.getStartTime()) / 1000;
             moveData.put("elapsedSeconds", elapsed);
+
+            // 记录战绩
+            int playerCount = room.getPlayers().size();
+            multiGameService.recordWin(roomId, userId, (int) elapsed, playerCount);
+
             broadcastToRoom(roomId, "winner", moveData);
         } else {
             broadcastToRoom(roomId, "player_moved", moveData);
@@ -241,10 +287,13 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
         String targetId = data.getString("targetUserId");
         roomService.kickPlayer(roomId, userId, targetId);
 
-        WebSocketSession targetSession = userSessions.get(targetId);
-        if (targetSession != null) {
-            targetSession.getAttributes().remove("roomId");
-            sendMessage(targetSession, "kicked", new JSONObject().put("message", "你已被房主移出房间"));
+        // 踢掉被踢用户的所有连接
+        Set<WebSocketSession> targetSessions = userSessions.get(targetId);
+        if (targetSessions != null) {
+            for (WebSocketSession ts : targetSessions) {
+                ts.getAttributes().remove("roomId");
+                sendMessage(ts, "kicked", new JSONObject().put("message", "你已被房主移出房间"));
+            }
         }
 
         JSONObject leaveData = new JSONObject();
@@ -270,6 +319,28 @@ public class MazeWebSocketHandler extends TextWebSocketHandler {
     }
 
     public static int getOnlineCount() {
-        return userSessions.size();
+        int count = 0;
+        for (Set<WebSocketSession> sessions : userSessions.values()) {
+            for (WebSocketSession s : sessions) {
+                if (s.isOpen()) count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * 获取当前所有在线用户的 ID 集合
+     */
+    public static Set<String> getOnlineUserIds() {
+        Set<String> onlineIds = ConcurrentHashMap.newKeySet();
+        for (Map.Entry<String, Set<WebSocketSession>> entry : userSessions.entrySet()) {
+            for (WebSocketSession s : entry.getValue()) {
+                if (s.isOpen()) {
+                    onlineIds.add(entry.getKey());
+                    break; // 只要该用户有一个打开的session就算在线
+                }
+            }
+        }
+        return onlineIds;
     }
 }
